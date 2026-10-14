@@ -1,0 +1,112 @@
+import { Link } from 'react-router-dom'
+
+export default function Reference() {
+  return (
+    <>
+      <section id="reference">
+        <h2>Clinical reference</h2>
+        <p className="small">Findings graded by the International Clinical Diabetic Retinopathy (ICDR) severity scale. This section is fixed reference text, independent of any single image or model run.</p>
+
+        <h3>ICDR severity scale</h3>
+        <table className="icdr-table">
+          <thead><tr><th>Level</th><th>Grade</th><th>Findings</th></tr></thead>
+          <tbody>
+            <tr><td>0</td><td>No DR</td><td>No abnormalities.</td></tr>
+            <tr><td>1</td><td>Mild NPDR</td><td>Microaneurysms only.</td></tr>
+            <tr className="referable"><td>2</td><td>Moderate NPDR</td><td>More than microaneurysms but less than severe NPDR (dot/blot hemorrhages, hard exudates, cotton wool spots present but limited). <strong>Referable threshold.</strong></td></tr>
+            <tr className="referable"><td>3</td><td>Severe NPDR</td><td>4:2:1 rule — &gt;20 intraretinal hemorrhages in each of 4 quadrants, venous beading in ≥2 quadrants, or prominent IRMA in ≥1 quadrant; no proliferative signs yet.</td></tr>
+            <tr className="referable"><td>4</td><td>Proliferative DR</td><td>Neovascularization and/or vitreous or preretinal hemorrhage.</td></tr>
+          </tbody>
+        </table>
+        <p className="small"><strong>Level 2 and above is referable</strong> — the patient should see an ophthalmologist.</p>
+
+        <h3>Lesion vocabulary</h3>
+        <div className="lesion-ref-list">
+          <details><summary>Microaneurysms (MA)</summary><p>Small, round, red dots; the earliest visible sign of DR; outpouchings of retinal capillary walls.</p></details>
+          <details><summary>Dot and blot hemorrhages</summary><p>Small, round hemorrhages in deeper retinal layers, larger than microaneurysms.</p></details>
+          <details><summary>Flame-shaped hemorrhages</summary><p>Hemorrhages in the superficial nerve fiber layer, following the curve of the nerve fibers.</p></details>
+          <details><summary>Hard exudates</summary><p>Sharply defined yellow-white lipid deposits, often ringing leaking microaneurysms.</p></details>
+          <details><summary>Cotton wool spots (soft exudates)</summary><p>Pale, fluffy-edged patches from localized nerve fiber layer infarcts.</p></details>
+          <details><summary>Venous beading</summary><p>Irregular, sausage-like venous dilation; a marker of more severe pre-proliferative disease.</p></details>
+          <details><summary>Intraretinal microvascular abnormalities (IRMA)</summary><p>Abnormal dilated capillary segments, a precursor to neovascularization.</p></details>
+          <details><summary>Neovascularization (NVD/NVE)</summary><p>New fragile vessel growth on/near the disc (NVD) or elsewhere (NVE); defines proliferative DR.</p></details>
+          <details><summary>Vitreous or preretinal hemorrhage</summary><p>Bleeding from neovascular vessels into the vitreous; a sight-threatening complication.</p></details>
+        </div>
+      </section>
+
+      <hr className="rule" />
+
+      <section>
+        <h2>How the system reaches a conclusion</h2>
+        <p>The pipeline has five stages. Each one is independent of the others in a way that matters:
+        a later stage never adjusts an earlier one to make the answer look tidier, and the two that
+        identify disease do so by completely different means and are never combined into a single score.</p>
+
+        <h3>1. Image quality</h3>
+        <p>Focus is measured as the variance of a Laplacian filter, brightness as the mean and spread of
+        the greyscale histogram, and field of view as the fraction of the frame that is not black border.
+        A frame that fails outright is rejected with the specific reason rather than screened anyway.
+        A borderline frame is enhanced first, using local contrast equalisation, illumination flattening
+        and light denoising.</p>
+
+        <h3>2. Classification</h3>
+        <p>A MobileNet trained on APTOS 2019 fundus images runs entirely in the browser and returns a
+        genuine two-class result, no disease against disease present. It is <strong>not</strong> a
+        five-level severity grader, and the app never pretends otherwise. Its confidence figures are raw
+        softmax outputs, not calibrated probabilities, so a reading of 100% means the image sits far on
+        one side of the model's decision boundary and nothing more.</p>
+
+        <h3>3. Explainability</h3>
+        <p>Grad-CAM shows where the network looked, computed from real gradients of its output with
+        respect to an internal convolutional layer. It answers &quot;what drove this prediction&quot;, not
+        &quot;where are the lesions&quot;, and the two questions have different answers. The optic disc draws
+        strong attention from almost any fundus classifier because it is the most distinctive structure
+        in the frame, so disc regions are shown but never counted as findings.</p>
+
+        <h3>4. Lesion candidates</h3>
+        <p>This stage is classical image processing with no machine learning in it at all, and it is
+        independent of stage 2. It separates lesions from blood vessels by <em>elongation</em> rather than
+        by size, which is the only property that actually distinguishes them: a microaneurysm is smaller
+        than a vessel is wide, so no size threshold can tell them apart. Measuring along lines at twelve
+        orientations, a vessel survives the test in the direction it runs while a round lesion is caught
+        by every direction. The same property excludes the macula for free, since the response depends on
+        how steeply intensity changes rather than on how dark something is.</p>
+        <p>Every region it reports is a <strong>candidate</strong>. Nothing here has been validated against
+        ground-truth lesion masks, so no accuracy figure is claimed for it.</p>
+
+        <h3>5. ICDR severity estimate</h3>
+        <p>The ICDR scale is defined by which lesion types are present and, for severe disease, by how many
+        hemorrhages appear in each quadrant. That is what stage 4 produces, so the published rule is applied
+        to those counts directly. The rule is followed faithfully; the counts it is fed are not validated,
+        so the grade is what the rule yields <strong>if</strong> those candidates were confirmed findings.</p>
+        <p><strong>The ceiling matters more than the grade.</strong> Two of the three arms of the 4-2-1 rule
+        are venous beading and IRMA, and proliferative disease is defined by neovascularisation. None of the
+        three is detectable here, because all are elongated and the vessel test removes them by construction.
+        So the estimate can reach severe NPDR only by counting hemorrhages, can never reach proliferative DR,
+        and can never rule either of them out. A low grade here does not mean a low grade in the eye.</p>
+        <p>A red referral banner appears whenever the result should not stand on its own: at or above the
+        referable threshold, when any lesion is seen at all, when landmarks fail, when image quality was
+        borderline, when the candidate count suggests noise, when hemorrhage counts sit on the rule's
+        boundary, or when the classifier and the lesion detector disagree with each other.</p>
+
+        <h3>6. Throughput planning</h3>
+        <p>A deliberately simple capacity model, not part of the AI at all. It takes acquisition rate,
+        bandwidth, measured model speed and reviewer capacity, and reports which stage is the bottleneck.
+        A production version of this would be a Simulink model. The full version lives on the{' '}
+        <Link to="/pipeline">capacity model</Link> page: a Simulink-style block diagram of the whole
+        service, coloured by how hard each stage is being pushed, which names the single stage choking
+        the programme and what becomes the limit once it is relieved.</p>
+
+        <hr className="rule-light" />
+        <h3>What the lesion detector cannot do</h3>
+        <p>These limits are structural rather than tuning problems. Flame-shaped hemorrhages and
+        neovascularisation are largely invisible to it, because both are elongated and the vessel test
+        discards them, which means the findings that define proliferative disease are exactly the ones it
+        misses. Venous beading and intraretinal microvascular abnormalities are not detected at all, as
+        both require judging vessel calibre along its length. The split between microaneurysm and
+        hemorrhage rests on area alone. A trained segmentation model would replace all of it, and the
+        project README explains what that would take.</p>
+      </section>
+    </>
+  )
+}
