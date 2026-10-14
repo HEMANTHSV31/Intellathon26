@@ -457,6 +457,9 @@ app.post('/api/simulink/simulate', (req, res) => {
   } catch (err) {
     console.error('Simulink simulation error:', err);
     return res.status(500).json({ error: 'Failed to run simulation model' });
+  }
+});
+
 // 5. MATLAB Lesion Detection Suite Endpoints
 app.get('/api/matlab/status', (req, res) => {
   const status = checkMatlabAvailability();
@@ -486,6 +489,8 @@ app.post('/api/matlab/detect-lesions', async (req, res) => {
       error: 'MATLAB lesion detection failed: ' + (err.message || err),
       engine: 'MATLAB Image Processing Suite'
     });
+  }
+});
 // 5. Upload/sync screening and image to server (called when online or when network regains)
 app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) => {
   try {
