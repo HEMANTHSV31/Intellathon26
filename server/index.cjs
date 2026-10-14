@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_dr_screening_2026';
 
 const { checkMatlabAvailability, detectLesions } = require('./matlabBridge.cjs');
+const { runBackendScreening } = require('./screeningEngine.cjs');
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -447,30 +448,109 @@ app.post('/api/patients/intake', optionalAuthenticateToken, async (req, res) => 
   }
 });
 
-// 7. Get Patients List with Accurate Quality Passed & Rejected Counts
+// 7. Get Patients List (Doctor Priority Queue: High > Medium > Low)
 app.get('/api/patients', optionalAuthenticateToken, async (req, res) => {
   try {
-    const result = await query(`
+    const { status, severity } = req.query;
+    let whereClauses = [];
+    let params = [];
+
+    // Filter by review status: pending (active priority queue), completed, or all
+    if (status === 'completed') {
+      whereClauses.push("LOWER(COALESCE(p.review_status, 'pending')) = 'completed'");
+    } else if (status !== 'all') {
+      // Default: active priority queue (not yet marked as complete)
+      whereClauses.push("LOWER(COALESCE(p.review_status, 'pending')) != 'completed'");
+    }
+
+    if (severity && severity !== 'ALL') {
+      params.push(severity.toUpperCase());
+      whereClauses.push(`UPPER(COALESCE(p.severity_level, 'LOW')) = $${params.length}`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const sql = `
       SELECT p.id, p.name, p.phone, p.created_at, p.updated_at,
+             COALESCE(p.severity_level, 'LOW') as severity_level,
+             COALESCE(p.review_status, 'pending') as review_status,
+             p.reviewed_at,
              COUNT(s.id)::int as total_image_count,
              COUNT(CASE WHEN s.quality_verdict != 'reject' THEN 1 END)::int as quality_passed_count,
              COUNT(CASE WHEN s.quality_verdict = 'reject' THEN 1 END)::int as quality_rejected_count,
              MAX(s.created_at) as latest_screening_date,
-             BOOL_OR(COALESCE(s.referable, false)) as referable_flag
+             BOOL_OR(COALESCE(s.referable, false)) as referable_flag,
+             MAX(s.dr_softmax) as max_dr_softmax,
+             MAX(s.icdr_grade) as primary_icdr_grade
       FROM patients p
       LEFT JOIN uploaded_screenings s ON LOWER(p.id) = LOWER(s.patient_id)
-      GROUP BY p.id, p.name, p.phone, p.created_at, p.updated_at
-      ORDER BY p.updated_at DESC
+      ${whereSql}
+      GROUP BY p.id, p.name, p.phone, p.created_at, p.updated_at, p.severity_level, p.review_status, p.reviewed_at
+      ORDER BY
+        CASE
+          WHEN UPPER(COALESCE(p.severity_level, 'LOW')) = 'HIGH' THEN 1
+          WHEN UPPER(COALESCE(p.severity_level, 'LOW')) = 'MEDIUM' THEN 2
+          WHEN UPPER(COALESCE(p.severity_level, 'LOW')) = 'LOW' THEN 3
+          ELSE 4
+        END ASC,
+        p.updated_at DESC
       LIMIT 100
-    `);
+    `;
+
+    const result = await query(sql, params);
     return res.json({ patients: result.rows });
   } catch (err) {
     console.error('Fetch patients error:', err);
-    return res.status(500).json({ error: 'Failed to fetch patients list' });
+    return res.status(500).json({ error: 'Failed to fetch patients list: ' + (err.message || err) });
   }
 });
 
-// 8. Upload/sync screening and image to Supabase
+// 7b. Doctor: Mark Patient Review as Complete (removes from active priority queue)
+app.post('/api/patients/:id/complete', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const rawId = req.params.id;
+    if (!rawId) {
+      return res.status(400).json({ error: 'Patient ID is required' });
+    }
+
+    const patientId = rawId.trim().toLowerCase();
+    const doctorUserId = req.user ? req.user.id : null;
+
+    const patientUpdate = await query(
+      `UPDATE patients
+       SET review_status = 'completed',
+           reviewed_by = $2,
+           reviewed_at = NOW(),
+           updated_at = NOW()
+       WHERE LOWER(id) = LOWER($1)
+       RETURNING id, name, review_status, reviewed_at;`,
+      [patientId, doctorUserId]
+    );
+
+    if (patientUpdate.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient record not found' });
+    }
+
+    await query(
+      `UPDATE uploaded_screenings
+       SET review_status = 'completed'
+       WHERE LOWER(patient_id) = LOWER($1);`,
+      [patientId]
+    );
+
+    console.log(`[Doctor Review] Patient ${patientId} marked as completed.`);
+    return res.json({
+      success: true,
+      message: 'Patient review marked as complete and removed from active priority queue.',
+      patient: patientUpdate.rows[0]
+    });
+  } catch (err) {
+    console.error('Mark complete error:', err);
+    return res.status(500).json({ error: 'Failed to complete review: ' + (err.message || err) });
+  }
+});
+
+// 8. Upload fundus image & Run Automated Backend Screening
 app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) => {
   try {
     const {
@@ -485,6 +565,7 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
       confidence,
       drScore,
       icdrGrade,
+      severityLevel: clientSeverity,
       referable,
       qualityVerdict,
       qualityReason,
@@ -501,7 +582,30 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
     const operatorId = req.user?.role === 'operator' ? req.user.id : (userId || null);
     const createdAt = timestamp ? new Date(timestamp) : new Date();
 
-    // Ensure patient ID is lowercased
+    // 1. Run Automated Backend Screening on the server
+    let backendAnalysis = null;
+    if (imageData) {
+      try {
+        backendAnalysis = await runBackendScreening(imageData, { eye, fileName });
+      } catch (screenErr) {
+        console.warn('Server screening engine exception:', screenErr.message);
+      }
+    }
+
+    // Determine final screening values (backend analysis takes priority)
+    const finalPrediction = backendAnalysis?.prediction || prediction || 'Screening Completed';
+    const finalConfidence = backendAnalysis?.confidence ?? confidence ?? 0.95;
+    const finalDrScore = backendAnalysis?.drScore ?? drScore ?? 0.5;
+    const finalDrSoftmax = backendAnalysis?.drSoftmax ?? drScore ?? 0.5;
+    const finalIcdrGrade = backendAnalysis?.icdrGrade || icdrGrade || 'ICDR Evaluated';
+    const finalSeverity = backendAnalysis?.severityLevel || clientSeverity || (finalDrSoftmax >= 0.75 ? 'HIGH' : finalDrSoftmax >= 0.4 ? 'MEDIUM' : 'LOW');
+    const finalReferable = backendAnalysis?.referable ?? !!referable;
+    const finalQualityVerdict = backendAnalysis?.qualityVerdict || qualityVerdict || 'ok';
+    const finalQualityReason = backendAnalysis?.qualityReason || qualityReason || null;
+    const finalRecommendations = backendAnalysis?.recommendations || recommendations || [];
+    const finalLesionCounts = backendAnalysis?.lesionCounts || lesionCounts || { microaneurysms: 0, hemorrhages: 0, hardExudates: 0, cottonWoolSpots: 0 };
+
+    // 2. Normalize patient identifier to lowercase
     let finalPatientId = patientId ? patientId.toLowerCase() : null;
     if (patientName && patientPhone) {
       const cleanName = patientName.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
@@ -510,22 +614,32 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
 
       try {
         await query(`
-          INSERT INTO patients (id, name, phone, operator_id, created_at, updated_at)
-          VALUES ($1, $2, $3, $4, NOW(), NOW())
-          ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
-        `, [finalPatientId, patientName.trim(), cleanPhone, operatorId]);
+          INSERT INTO patients (id, name, phone, operator_id, severity_level, review_status, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, 'pending', NOW(), NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            phone = EXCLUDED.phone,
+            severity_level = CASE
+              WHEN UPPER(EXCLUDED.severity_level) = 'HIGH' OR UPPER(patients.severity_level) = 'HIGH' THEN 'HIGH'
+              WHEN UPPER(EXCLUDED.severity_level) = 'MEDIUM' OR UPPER(patients.severity_level) = 'MEDIUM' THEN 'MEDIUM'
+              ELSE 'LOW'
+            END,
+            review_status = 'pending',
+            updated_at = NOW();
+        `, [finalPatientId, patientName.trim(), cleanPhone, operatorId, finalSeverity]);
       } catch (pErr) {
         console.warn('Patient auto-sync notice:', pErr.message);
       }
     }
 
+    // 3. Upsert screening record with severity level and dr_softmax
     const upsertScreeningQuery = `
       INSERT INTO uploaded_screenings (
         id, user_id, patient_id, patient_name, patient_phone, eye, operator_id,
-        file_name, image_data, prediction, confidence, dr_score,
-        icdr_grade, referable, quality_verdict, quality_reason, recommendations,
-        lesion_counts, created_at, synced_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW())
+        file_name, image_data, prediction, confidence, dr_score, dr_softmax,
+        icdr_grade, severity_level, review_status, referable, quality_verdict, quality_reason,
+        recommendations, lesion_counts, created_at, synced_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'pending', $16, $17, $18, $19, $20, $21, NOW())
       ON CONFLICT (id) DO UPDATE SET
         synced_at = NOW(),
         patient_id = COALESCE(EXCLUDED.patient_id, uploaded_screenings.patient_id),
@@ -537,13 +651,15 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
         prediction = COALESCE(EXCLUDED.prediction, uploaded_screenings.prediction),
         confidence = COALESCE(EXCLUDED.confidence, uploaded_screenings.confidence),
         dr_score = COALESCE(EXCLUDED.dr_score, uploaded_screenings.dr_score),
+        dr_softmax = COALESCE(EXCLUDED.dr_softmax, uploaded_screenings.dr_softmax),
         icdr_grade = COALESCE(EXCLUDED.icdr_grade, uploaded_screenings.icdr_grade),
+        severity_level = COALESCE(EXCLUDED.severity_level, uploaded_screenings.severity_level),
         referable = COALESCE(EXCLUDED.referable, uploaded_screenings.referable),
         quality_verdict = COALESCE(EXCLUDED.quality_verdict, uploaded_screenings.quality_verdict),
         quality_reason = COALESCE(EXCLUDED.quality_reason, uploaded_screenings.quality_reason),
         recommendations = COALESCE(EXCLUDED.recommendations, uploaded_screenings.recommendations),
         lesion_counts = COALESCE(EXCLUDED.lesion_counts, uploaded_screenings.lesion_counts)
-      RETURNING id, patient_id, patient_name, file_name, prediction, referable, created_at, synced_at;
+      RETURNING id, patient_id, patient_name, file_name, prediction, confidence, dr_softmax, icdr_grade, severity_level, referable, created_at;
     `;
 
     const values = [
@@ -556,49 +672,83 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
       operatorId,
       fileName || 'Fundus Image',
       imageData || null,
-      prediction || 'Screening Completed',
-      confidence !== undefined && confidence !== null ? confidence : null,
-      drScore !== undefined && drScore !== null ? drScore : null,
-      icdrGrade || null,
-      !!referable,
-      qualityVerdict || null,
-      qualityReason || null,
-      recommendations ? JSON.stringify(recommendations) : null,
-      lesionCounts ? JSON.stringify(lesionCounts) : null,
+      finalPrediction,
+      finalConfidence,
+      finalDrScore,
+      finalDrSoftmax,
+      finalIcdrGrade,
+      finalSeverity,
+      finalReferable,
+      finalQualityVerdict,
+      finalQualityReason,
+      JSON.stringify(finalRecommendations),
+      JSON.stringify(finalLesionCounts),
       createdAt
     ];
 
     const result = await query(upsertScreeningQuery, values);
-    console.log(`[Supabase] Screening record ${id} (Patient: ${finalPatientId || 'Anonymous'}) saved.`);
+    console.log(`[Backend Screening] Analyzed ${id}: ${finalPrediction} (Softmax: ${finalDrSoftmax}, Severity: ${finalSeverity}). Saved to Supabase.`);
 
     return res.status(201).json({
       success: true,
-      message: 'Screening image and report successfully saved to Supabase',
-      screening: result.rows[0]
+      message: 'Screening processed by backend and saved to Supabase',
+      screening: result.rows[0],
+      analysis: {
+        prediction: finalPrediction,
+        drSoftmax: finalDrSoftmax,
+        confidence: finalConfidence,
+        icdrGrade: finalIcdrGrade,
+        severityLevel: finalSeverity,
+        referable: finalReferable,
+        lesionCounts: finalLesionCounts
+      }
     });
   } catch (err) {
     console.error('Screening upload error:', err);
-    return res.status(500).json({ error: 'Failed to save screening to Supabase', details: err.message });
+    return res.status(500).json({ error: 'Failed to process screening in backend: ' + (err.message || err) });
   }
 });
 
-// 9. List uploaded screenings with lowercase filtering and image thumbnail
+// 9. List uploaded screenings with lowercase filtering, severity, and image data
 app.get('/api/screenings', optionalAuthenticateToken, async (req, res) => {
   try {
-    const { patientId } = req.query;
+    const { patientId, severity, status } = req.query;
     let sql = `
       SELECT id, user_id, patient_id, patient_name, patient_phone, eye, operator_id,
-             file_name, image_data, prediction, confidence, dr_score,
-             icdr_grade, referable, quality_verdict, quality_reason,
-             recommendations, lesion_counts, created_at, synced_at
+             file_name, image_data, prediction, confidence, dr_score, dr_softmax,
+             icdr_grade, severity_level, review_status, referable,
+             quality_verdict, quality_reason, recommendations, lesion_counts,
+             created_at, synced_at
       FROM uploaded_screenings
+      WHERE 1=1
     `;
     const params = [];
+
     if (patientId) {
-      sql += ' WHERE LOWER(patient_id) = LOWER($1)';
       params.push(patientId.trim().toLowerCase());
+      sql += ` AND LOWER(patient_id) = LOWER($${params.length})`;
     }
-    sql += ' ORDER BY created_at DESC LIMIT 100';
+
+    if (severity && severity !== 'ALL') {
+      params.push(severity.toUpperCase());
+      sql += ` AND UPPER(COALESCE(severity_level, 'LOW')) = $${params.length}`;
+    }
+
+    if (status && status !== 'ALL') {
+      params.push(status.toLowerCase());
+      sql += ` AND LOWER(COALESCE(review_status, 'pending')) = $${params.length}`;
+    }
+
+    sql += ` ORDER BY
+      CASE
+        WHEN UPPER(COALESCE(severity_level, 'LOW')) = 'HIGH' THEN 1
+        WHEN UPPER(COALESCE(severity_level, 'LOW')) = 'MEDIUM' THEN 2
+        WHEN UPPER(COALESCE(severity_level, 'LOW')) = 'LOW' THEN 3
+        ELSE 4
+      END ASC,
+      created_at DESC
+      LIMIT 100;
+    `;
 
     const result = await query(sql, params);
     return res.json({ screenings: result.rows });
@@ -608,8 +758,73 @@ app.get('/api/screenings', optionalAuthenticateToken, async (req, res) => {
   }
 });
 
+// 10. Admin Records Search (Backend-based multi-field searching)
+app.get('/api/admin/records', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { search, severity, status } = req.query;
+    let sql = `
+      SELECT s.id as screening_id, s.patient_id, s.patient_name, s.patient_phone, s.eye,
+             s.file_name, s.image_data, s.prediction, s.confidence, s.dr_score, s.dr_softmax,
+             s.icdr_grade, s.referable,
+             COALESCE(s.severity_level, p.severity_level, 'LOW') as severity_level,
+             COALESCE(p.review_status, s.review_status, 'pending') as review_status,
+             s.quality_verdict, s.quality_reason, s.recommendations, s.lesion_counts,
+             s.created_at, p.reviewed_at
+      FROM uploaded_screenings s
+      LEFT JOIN patients p ON LOWER(s.patient_id) = LOWER(p.id)
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (search && search.trim()) {
+      const q = `%${search.trim().toLowerCase()}%`;
+      params.push(q);
+      const idx = params.length;
+      sql += ` AND (
+        LOWER(COALESCE(s.patient_id, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.patient_name, p.name, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.patient_phone, p.phone, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.file_name, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.icdr_grade, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.prediction, '')) LIKE $${idx}
+      )`;
+    }
+
+    if (severity && severity !== 'ALL') {
+      params.push(severity.toUpperCase());
+      sql += ` AND UPPER(COALESCE(s.severity_level, p.severity_level, 'LOW')) = $${params.length}`;
+    }
+
+    if (status && status !== 'ALL') {
+      params.push(status.toLowerCase());
+      sql += ` AND LOWER(COALESCE(p.review_status, s.review_status, 'pending')) = $${params.length}`;
+    }
+
+    sql += ` ORDER BY
+      CASE
+        WHEN UPPER(COALESCE(s.severity_level, p.severity_level, 'LOW')) = 'HIGH' THEN 1
+        WHEN UPPER(COALESCE(s.severity_level, p.severity_level, 'LOW')) = 'MEDIUM' THEN 2
+        WHEN UPPER(COALESCE(s.severity_level, p.severity_level, 'LOW')) = 'LOW' THEN 3
+        ELSE 4
+      END ASC,
+      s.created_at DESC
+      LIMIT 150;
+    `;
+
+    const result = await query(sql, params);
+    return res.json({
+      records: result.rows,
+      totalCount: result.rows.length,
+      searchQuery: search || ''
+    });
+  } catch (err) {
+    console.error('Admin search error:', err);
+    return res.status(500).json({ error: 'Backend search failed: ' + (err.message || err) });
+  }
+});
+
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'DR Screening Auth & MATLAB API' });
+  res.json({ status: 'ok', service: 'DR Screening Auth, Backend Engine & MATLAB API' });
 });
 
 app.listen(PORT, () => {

@@ -13,6 +13,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+// Gracefully handle idle client errors (like transient cloud ECONNRESET) to prevent Node process termination
+pool.on('error', (err) => {
+  console.warn('[Supabase DB Pool] Idle client notice (recovering automatically):', err.code || err.message);
+});
+
 async function initDb(maxRetries = 5) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     let client;
@@ -93,11 +98,19 @@ async function initDb(maxRetries = 5) {
 
       // Ensure patient columns exist if uploaded_screenings already pre-existed
       await client.query(`
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS severity_level VARCHAR(50) DEFAULT 'LOW';
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'pending';
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL;
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_id VARCHAR(255);
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_name VARCHAR(255);
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_phone VARCHAR(50);
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS operator_id UUID REFERENCES users(id) ON DELETE SET NULL;
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS eye VARCHAR(50);
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS severity_level VARCHAR(50) DEFAULT 'LOW';
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'pending';
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS dr_softmax FLOAT;
       `);
 
       console.log('Database tables (app_roles, users, patients, uploaded_screenings) verified/created in Supabase Postgres.');
