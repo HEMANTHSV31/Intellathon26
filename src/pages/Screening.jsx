@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { initScreening } from '../utils/drEngine'
+import OfflineScreeningsPanel from '../components/OfflineScreeningsPanel'
 
 export default function Screening() {
   useEffect(() => {
@@ -228,6 +229,9 @@ export default function Screening() {
         </div>
         <div id="report-body"></div>
       </section>
+
+      {/* Offline Rural Clinic History */}
+      <OfflineScreeningsPanel />
 
       <div className="refer-banner" id="refer-banner" role="alert" aria-live="polite">
         <strong>Ask an ophthalmologist</strong>
