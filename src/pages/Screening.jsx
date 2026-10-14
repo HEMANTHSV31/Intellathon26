@@ -192,17 +192,17 @@ export default function Screening() {
             <p className="small">These thresholds control morphological sensitivity across the retinal field. Changing them re-runs only Step 4 without re-running the neural network.</p>
             <label className="field">
               Dark-lesion sensitivity floor
-              <input type="number" id="tune-dark" defaultValue="7" step="0.5" min="1" max="40" />
+              <input type="number" id="tune-dark" defaultValue="8" step="0.5" min="1" max="40" />
             </label>
             <div className="field-note">Floor in grey levels below which a dark region is never seeded. Working cut is adaptive to response distribution.</div>
             <label className="field">
               Bright-lesion sensitivity floor
-              <input type="number" id="tune-bright" defaultValue="6" step="0.5" min="1" max="40" />
+              <input type="number" id="tune-bright" defaultValue="10" step="0.5" min="1" max="40" />
             </label>
             <div className="field-note">Calibrated for cotton wool spots and hard exudates across both open retina and perimacular background.</div>
             <label className="field">
               Minimum contrast above noise (k)
-              <input type="number" id="tune-contrast" defaultValue="2.4" step="0.1" min="0.5" max="10" />
+              <input type="number" id="tune-contrast" defaultValue="3" step="0.1" min="0.5" max="10" />
             </label>
             <div className="field-note">How far a candidate region must stand clear of local retinal noise.</div>
             <label className="field">

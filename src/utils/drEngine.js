@@ -61,22 +61,22 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // so they follow each image rather than assuming one camera. Lowering DARK_K
   // finds fainter lesions and more noise; MIN_CONTRAST_K is the backstop that
   // keeps that trade from turning into speckle.
-  const DARK_K = 3.2;
-  const BRIGHT_K = 2.6;
-  let MIN_CONTRAST_K = 2.4;
+  const DARK_K = 3.5;
+  const BRIGHT_K = 4.0;
+  let MIN_CONTRAST_K = 3.0;
   // Absolute floors in grey levels. Without these the detector collapses on a
   // smooth image: a low noise estimate drives the adaptive threshold down to a
   // few grey levels, and normal choroidal texture then reads as lesions. A real
   // microaneurysm sits well below its background and a real exudate well above,
   // so nothing genuine is lost by refusing to look below these.
-  const DARK_FLOOR = 7.0;
-  const BRIGHT_FLOOR = 6.0;
-  const DARK_CONTRAST_FLOOR = 6.5;
-  const BRIGHT_CONTRAST_FLOOR = 5.5;
+  const DARK_FLOOR = 10;
+  const BRIGHT_FLOOR = 12;
+  const DARK_CONTRAST_FLOOR = 9;
+  const BRIGHT_CONTRAST_FLOOR = 11;
   // Cotton wool spots are a quarter to a half disc diameter across. Anything
   // small and soft-edged is far more likely to be defocus or an artefact, so
   // the class carries a size requirement rather than accepting every soft blob.
-  const CWS_MIN_AREA_FRAC = 0.00005;
+  const CWS_MIN_AREA_FRAC = 0.0004;
   // Anything sizeable this far out from the centre of the aperture is an imaging
   // artifact, not a lesion: shadows from pupil misalignment, peripapillary
   // crescents and lens flare all live at the edge of the field and can be large.
@@ -143,11 +143,11 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // behaved like an on/off switch: it was the only thing connected to anything.
   // An upper quantile sits in the tail where the signal actually is, so the
   // threshold now tracks the camera, the exposure and the enhancement.
-  const SEED_TAIL_Q = 0.95;
+  const SEED_TAIL_Q = 0.97;
   // Backstops in grey levels, for an image whose tail estimate collapses — a
   // near-uniform frame, or one where the retina barely fills the aperture.
-  let SEED_FLOOR_DARK = 6.5;
-  let SEED_FLOOR_BRIGHT = 5.5;
+  let SEED_FLOOR_DARK = 8;
+  let SEED_FLOOR_BRIGHT = 10;
   // ---- Scale saturation, the test that separates lesions from vessel geometry.
   //
   // Amplitude cannot do it. Measured over the retina, the top-hat response of a
@@ -218,7 +218,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   let SATURATION_MAX_GROWTH = 1.10;
   // A region is only discarded as vessel when this much of it lies on the vessel
   // map. Set too low, lesions touching a vessel are lost with it.
-  const VESSEL_OVERLAP_REJECT = 0.38;
+  const VESSEL_OVERLAP_REJECT = 0.78;
   // Broad, smooth darkening is anatomy or shadow, not a lesion. The macula is
   // the main case: it is genuinely darker than surrounding retina, so a detector
   // measuring darkness against a wide background will flag it every time.
@@ -2206,7 +2206,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // can see which marks sit on the vasculature. The factor is deliberately
   // modest: enough to drop a wide spot in a vein that is only as dark as the
   // vein, not enough to drop a focal lesion on one.
-  const ON_VESSEL_CONTRAST_FACTOR = 1.15;
+  const ON_VESSEL_CONTRAST_FACTOR = 1.35;
   // A candidate with vessel persisting outward in this much of every direction
   // is inside the vascular tree, not a discrete lesion within it. Because the
   // measure is now persistence rather than mere presence, a lesion's collar
@@ -2362,7 +2362,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     // separate square closing is both cheaper and sounder, since a square element
     // removes every small lesion along with the vessels.
     const vesselMask = seeds.vesselMask;
-    const vesselZone = dilateMask(vesselMask, w, h, 2);
+    const vesselZone = dilateMask(vesselMask, w, h, 1);
 
     // ---- Scale saturation.
     // Which rung of the ladder speaks for a region of this size: the first
@@ -2517,7 +2517,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     // the vessel map was built.
     const darkKeep = seeds.tDark*HYST_RATIO, brightKeep = seeds.tBright*HYST_RATIO;
     for (let i=0;i<n;i++){
-      if (!vesselMask[i] && (darkSeed[i] || seeds.roundDark[i] > darkKeep)) darkLoose[i] = 1;
+      if (darkSeed[i] || seeds.roundDark[i] > darkKeep) darkLoose[i] = 1;
       if (brightSeed[i] || seeds.roundBright[i] > brightKeep) brightLoose[i] = 1;
     }
 
@@ -2527,7 +2527,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const sharpEdgeThresh = meanGrad*1.5;
 
     const maxArea = Math.round(n*0.030);
-    const minArea = Math.max(3, Math.round(n*0.000004));
+    const minArea = Math.max(6, Math.round(n*0.000012));
     const maMaxArea = Math.max(minArea+1, Math.round(n*0.00018));
     const cwsMinArea = Math.round(n*CWS_MIN_AREA_FRAC);
 
@@ -2622,8 +2622,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     function isEdgeArtifact(c){
       if (c.area < edgeArtifactArea) return false;      // small peripheral lesions stay
       const dx = c.cx-ap.cx, dy = c.cy-ap.cy;
-      const d2 = dx*dx + dy*dy;
-      return d2 > (ap.R*0.88)*(ap.R*0.88) || (c.area >= edgeArtifactArea && d2 > edgeR2);
+      return (dx*dx + dy*dy) > edgeR2;
     }
 
     // The junction test is only meaningful at the scale vessels cross and branch
@@ -2647,16 +2646,16 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       return c.pixels.length ? on/c.pixels.length : 0;
     }
 
-    function classify(comps, dark, isPass2){
-      const covered = dark ? darkCovered : brightCovered; const markCovered = (comp) => { if (comp && comp.pixels) for (let i=0;i<comp.pixels.length;i++) covered[comp.pixels[i]] = 1; };
+    function classify(comps, dark){
+      const covered = dark ? darkCovered : brightCovered;
       comps.forEach(c => {
         // No directional response anywhere in the region means no lesion: this
         // is what excludes the vessels, the macula and smooth background shading,
         // all in one test, without needing to know where they are.
         if (!c.hasSeed){ rejected.noSeed++; return; }
         if (c.area < minArea){ rejected.tooSmall++; return; }
-        if (c.area > maxArea){ rejected.tooLarge++; markCovered(c); return; }
-        if (nearDisc(c.cx, c.cy, 1.25)){ rejected.disc++; markCovered(c); return; }
+        if (c.area > maxArea){ rejected.tooLarge++; return; }
+        if (nearDisc(c.cx, c.cy, 1.15)){ rejected.disc++; return; }
         // Outside that circle the disc can still be the explanation for a bright
         // mark: the rim it was grown from, a crescent of sclera beside it, the
         // nerve-fibre reflex arcing off it. Two independent ways of saying so,
@@ -2668,32 +2667,29 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         // the disc's own margin is where a disc hemorrhage sits, which is a
         // finding worth more than everything this rule removes.
         if (!dark && nearDisc(c.cx, c.cy, PERIPAPILLARY_MULT)){
-          if (discTissueFrac(c) >= DISC_TISSUE_OVERLAP){ rejected.discTissue++; markCovered(c); return; }
-          if (looksLikeDiscTissue(c)){ rejected.discColour++; markCovered(c); return; }
+          if (discTissueFrac(c) >= DISC_TISSUE_OVERLAP){ rejected.discTissue++; return; }
+          if (looksLikeDiscTissue(c)){ rejected.discColour++; return; }
         }
-        if (isEdgeArtifact(c)){ rejected.edge++; markCovered(c); return; }
-        if (dark && anatomy && anatomy.fovea && Math.hypot(c.cx-anatomy.fovea.x, c.cy-anatomy.fovea.y) <= anatomy.maculaRadius*0.45 && c.aspect <= 1.8){ rejected.macula++; markCovered(c); return; }
-        // Elongated streak filter: true microaneurysms and dot hemorrhages are compact blobs
-        if (dark && (c.aspect > 1.95 || (c.aspect > 1.55 && c.fillRatio < 0.48))){ rejected.streak++; markCovered(c); return; }
-        if (!dark && c.aspect > 3.5 && c.fillRatio < 0.28){ rejected.streak++; markCovered(c); return; }
+        if (isEdgeArtifact(c)){ rejected.edge++; return; }
+        if (c.aspect > 4.0 && c.fillRatio < 0.30){ rejected.streak++; return; }
 
-        const vFrac = vesselOverlapFrac(c);
-        if (vFrac > VESSEL_OVERLAP_REJECT || (dark && c.aspect > 1.4 && vFrac > 0.18)){ rejected.vessel++; markCovered(c); return; }
+        // A region lying almost entirely on the vessel map is a piece of vessel,
+        // whatever seeded it. The threshold is high on purpose: a lesion touching
+        // a vessel overlaps it partially, and must survive.
+        if (vesselOverlapFrac(c) > VESSEL_OVERLAP_REJECT){ rejected.vessel++; return; }
 
         // Crossings, bifurcations, bends and choroidal mottling answer the
         // roundness test at one element length the same way a lesion does. They
         // are told apart by whether the response stops growing when the element
         // does: a lesion is bounded, they are not.
-        if (failsSaturation(c, dark)){ rejected.unbounded++; markCovered(c); return; }
+        if (failsSaturation(c, dark)){ rejected.unbounded++; return; }
 
         // Crossings, bifurcations and tight bends answer the roundness test the
         // same way a lesion does. They are told apart by what runs out of them.
         let onVessel = false;
         if (dark && c.area <= junctionMaxArea){
           const ctx = vesselArms(c.cx, c.cy, c.area, vesselZone, w, h, junctionArmLen);
-          if (isVesselJunction(ctx)){ rejected.junction++; markCovered(c); return; }
-          // Continuous vessel running through: true veins are not lesions
-          if (isThroughVessel(ctx)){ rejected.vessel++; markCovered(c); return; }
+          if (isVesselJunction(ctx)){ rejected.junction++; return; }
           onVessel = isThroughVessel(ctx) || ctx.arms >= 1;
         }
 
@@ -2703,16 +2699,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         // vessel scores well on it simply for being a vessel. A candidate on the
         // vasculature therefore has to clear a higher bar than one in open
         // retina before the same figure means the same thing.
-        let bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
-        let isPerimacular = false;
-        if (anatomy && anatomy.fovea) {
-          const dFov = Math.hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y);
-          isPerimacular = dFov <= (anatomy.maculaRadius * 2.5);
-        }
-        if (isPerimacular && !dark) {
-          bar = bar * 0.75;
-        }
-        if (isPass2 && dark && (vesselOverlapFrac(c) > 0.05 || c.aspect > 1.35 || failsSaturation(c, dark))){ rejected.vessel++; return; }
+        const bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
         if (c.maxContrast < bar){ rejected.weak++; return; }
 
         let type;
@@ -2721,7 +2708,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
             ? LESION_TYPES.MA : LESION_TYPES.HEM;
         } else if (c.meanGradient >= sharpEdgeThresh){
           type = LESION_TYPES.HE;
-        } else if (c.area >= cwsMinArea || (c.maxContrast >= bar*0.85 && c.area >= Math.max(4, Math.round(n*0.00003)))){
+        } else if (c.area >= cwsMinArea){
           type = LESION_TYPES.CWS;
         } else {
           rejected.weak++; return;
@@ -2743,11 +2730,11 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const darkLeft = new Uint8Array(n), brightLeft = new Uint8Array(n);
     let dLeft = 0, bLeft = 0;
     for (let i=0;i<n;i++){
-      if (darkSeed[i] && !darkCovered[i] && !vesselZone[i] && !vesselMask[i]){ darkLeft[i] = 1; dLeft++; }
+      if (darkSeed[i] && !darkCovered[i]){ darkLeft[i] = 1; dLeft++; }
       if (brightSeed[i] && !brightCovered[i]){ brightLeft[i] = 1; bLeft++; }
     }
-    if (dLeft) classify(connectedComponents(darkLeft, w, h, maxArea, darkDev, grad, null), true, true);
-    if (bLeft) classify(connectedComponents(brightLeft, w, h, maxArea, brightDev, grad, null), false, true);
+    if (dLeft) classify(connectedComponents(darkLeft, w, h, maxArea, darkDev, grad, null), true);
+    if (bLeft) classify(connectedComponents(brightLeft, w, h, maxArea, brightDev, grad, null), false);
 
     candidates.sort((a,b) => b.area - a.area);
 

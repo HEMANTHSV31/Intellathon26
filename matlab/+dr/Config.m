@@ -64,35 +64,45 @@ C.cam.featherFrac    = 0.7;
 % Deviation thresholds, as multiples of the image's own robust noise scale plus
 % an absolute floor. Both are needed: the multiple adapts to the camera, the
 % floor stops a very clean image from dropping its threshold into the texture.
-C.lesion.darkK   = 3.2;
-C.lesion.brightK = 2.6;             % balanced sensitivity for true lesions
-C.lesion.darkFloor   = 7.0;         % prevents veins and background choroid from seeding
-C.lesion.brightFloor = 6.0;         % captures true exudates and cotton wool spots
-C.lesion.darkContrastFloor   = 6.5;
-C.lesion.brightContrastFloor = 5.5;
-C.lesion.minContrastK = 2.4;
+C.lesion.darkK   = 3.5;
+C.lesion.brightK = 4.0;
+C.lesion.darkFloor   = 10;
+C.lesion.brightFloor = 12;
+C.lesion.darkContrastFloor   = 9;
+C.lesion.brightContrastFloor = 11;
+C.lesion.minContrastK = 3.0;
 
-C.lesion.cwsMinAreaFrac = 0.00008;  % tuned for localized CWS
-C.lesion.edgeZoneFrac      = 0.82;  % beyond this fraction of the aperture radius
-C.lesion.edgeArtifactAreaFrac = 0.0015;
-C.lesion.hystRatio = 0.45;          % strict hysteresis prevents vein bleeding
+C.lesion.cwsMinAreaFrac = 0.0004;   % cotton wool spots are a quarter disc across
+C.lesion.edgeZoneFrac      = 0.80;  % beyond this fraction of the aperture radius
+C.lesion.edgeArtifactAreaFrac = 0.0015;  % a region this large is a rim artifact
+C.lesion.hystRatio = 0.45;          % permissive threshold, as a fraction of strict
 
-% Vessel map. Suppresses veins and vasculature before candidate formation.
+% Vessel map. A vessel is told from a lesion by the *spread* of the directional
+% closing across orientations, not by the size of any one response: at a vessel
+% the element lying along it fills nothing while every crossing element fills it
+% completely, so the responses are far apart. At a round lesion they are close.
 C.lesion.vesselElongation = 1.5;
 C.lesion.vesselSeedQ = 0.95;
 C.lesion.vesselGrowQ = 0.80;
-C.lesion.vesselOverlapReject = 0.38; % calibrated threshold stops vein segments passing
+C.lesion.vesselOverlapReject = 0.78;
 
+% Linear structuring element, as a fraction of the short edge. Too short and
+% thin vessels are filled and read as lesions; too long and short vessel
+% segments start to read as lesions.
 C.lesion.linearSEFrac = 0.014;
 C.lesion.linearOrientations = 12;
-C.lesion.seedTailQ = 0.95;          % 95th percentile avoids seeding along veins
-C.lesion.seedFloorDark = 6.5;
-C.lesion.seedFloorBright = 5.5;
+C.lesion.seedTailQ = 0.97;
+C.lesion.seedFloorDark = 8;
+C.lesion.seedFloorBright = 10;
 
+% Scale saturation. A bounded blob is already filled at the element matching its
+% own width, so the next element up adds nothing; anything that continues past
+% the element keeps gaining at every rung. That, not amplitude, is what separates
+% a lesion from a vessel bend or a patch of choroidal mottling.
 C.lesion.saturationSEMult = 2.0;
 C.lesion.saturationLadder = 3;      % seL, 2*seL, 4*seL
 C.lesion.saturationOrientations = 6;
-C.lesion.saturationMaxGrowth = 1.10; % strict saturation stops vessel crossings
+C.lesion.saturationMaxGrowth = 1.10;
 
 % Vessel junction test. Where two vessels cross, where one branches and at the
 % apex of a tight bend there is no direction in which the structure is straight,
