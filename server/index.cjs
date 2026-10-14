@@ -9,6 +9,8 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_dr_screening_2026';
 
+const { checkMatlabAvailability, detectLesions } = require('./matlabBridge.cjs');
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -206,6 +208,35 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
   }
 });
 
+// 5. MATLAB Lesion Detection Suite Endpoints
+app.get('/api/matlab/status', (req, res) => {
+  const status = checkMatlabAvailability();
+  res.json({
+    status: 'ok',
+    matlab: status,
+    codebase: {
+      path: 'matlab/+dr/',
+      cliScript: 'matlab/detectLesionsCli.m',
+      pipeline: 'dr.detectLesionCandidates'
+    }
+  });
+});
+
+app.post('/api/matlab/detect-lesions', async (req, res) => {
+  try {
+    const { image, anatomy, options } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: 'Fundus image is required for lesion detection' });
+    }
+
+    const results = await detectLesions(image, { anatomy, ...options });
+    return res.json(results);
+  } catch (err) {
+    console.error('MATLAB lesion detection error:', err);
+    return res.status(500).json({
+      error: 'MATLAB lesion detection failed: ' + (err.message || err),
+      engine: 'MATLAB Image Processing Suite'
+    });
 // 5. Upload/sync screening and image to server (called when online or when network regains)
 app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) => {
   try {
@@ -303,9 +334,9 @@ app.get('/api/screenings', optionalAuthenticateToken, async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'DR Screening Auth API' });
+  res.json({ status: 'ok', service: 'DR Screening Auth & MATLAB API' });
 });
 
 app.listen(PORT, () => {
-  console.log(`Auth server running on http://127.0.0.1:${PORT}`);
+  console.log(`Auth and MATLAB server running on http://127.0.0.1:${PORT}`);
 });
