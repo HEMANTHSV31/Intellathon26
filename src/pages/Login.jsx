@@ -9,6 +9,8 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [fullName, setFullName] = useState('')
+  const [role, setRole] = useState('operator')
+  const [phone, setPhone] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -23,6 +25,23 @@ export default function Login() {
     setError('')
     setNotice('')
   }, [searchParams])
+
+  const quickFillRole = async (selectedRole) => {
+    setRole(selectedRole)
+    const demoAccounts = {
+      operator: { email: 'operator.vikram@clinic.org', name: 'Vikram (Clinic Operator)', phone: '9876543210' },
+      doctor: { email: 'dr.sharma@hospital.org', name: 'Dr. Ananya Sharma (Ophthalmologist)', phone: '9811223344' },
+      patient: { email: 'patient.ramesh@gmail.com', name: 'Ramesh Kumar (Patient)', phone: '9988776655' },
+      admin: { email: 'admin.retina@health.gov', name: 'Dr. Director Admin', phone: '9000000001' }
+    }
+    const acc = demoAccounts[selectedRole]
+    setEmail(acc.email)
+    setPassword('password123')
+    setConfirmPassword('password123')
+    setFullName(acc.name)
+    setPhone(acc.phone)
+    setNotice(`Demo credentials loaded for role: ${selectedRole.toUpperCase()}. Click Sign In or Create Account.`)
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -48,7 +67,7 @@ export default function Login() {
     setSubmitting(true)
     try {
       if (isSignUp) {
-        await signup(email, password, fullName)
+        await signup(email, password, fullName, role, phone)
         navigate(from, { replace: true })
       } else {
         await login(email, password)
@@ -56,7 +75,7 @@ export default function Login() {
       }
     } catch (err) {
       if (err.needsSignup) {
-        setNotice('No account found for this email. Switched to Sign Up.')
+        setNotice('No account found for this email. Switched to Sign Up with role.')
         setIsSignUp(true)
       } else {
         setError(err.message || 'Authentication failed. Please check your credentials.')
@@ -80,7 +99,7 @@ export default function Login() {
       }}
     >
       {/* Header */}
-      <div style={{ marginBottom: '1.85rem' }}>
+      <div style={{ marginBottom: '1.25rem' }}>
         <h1
           style={{
             margin: '0 0 0.45rem 0',
@@ -94,9 +113,90 @@ export default function Login() {
         </h1>
         <p style={{ margin: 0, fontSize: '0.88rem', color: '#64748b', lineHeight: 1.45 }}>
           {isSignUp
-            ? 'Enter your information below to register for screening tools'
+            ? 'Select your role and enter your information below (synced with Supabase)'
             : 'Enter your email address and password to continue'}
         </p>
+      </div>
+
+      {/* Demo Role Quick-Fill Buttons for Evaluators */}
+      <div style={{ marginBottom: '1.5rem', background: '#f8fafc', padding: '0.85rem', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+        <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>
+          ⚡ 1-Click Demo Profiles (Supabase Synced):
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={() => quickFillRole('operator')}
+            style={{
+              padding: '0.45rem 0.6rem',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              background: role === 'operator' ? '#0d7a63' : '#ffffff',
+              color: role === 'operator' ? '#ffffff' : '#0d7a63',
+              border: '1px solid #0d7a63',
+              borderRadius: 5,
+              cursor: 'pointer',
+              textAlign: 'center',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            📸 Operator (Upload)
+          </button>
+          <button
+            type="button"
+            onClick={() => quickFillRole('doctor')}
+            style={{
+              padding: '0.45rem 0.6rem',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              background: role === 'doctor' ? '#0284c7' : '#ffffff',
+              color: role === 'doctor' ? '#ffffff' : '#0284c7',
+              border: '1px solid #0284c7',
+              borderRadius: 5,
+              cursor: 'pointer',
+              textAlign: 'center',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            🩺 Doctor (Review)
+          </button>
+          <button
+            type="button"
+            onClick={() => quickFillRole('patient')}
+            style={{
+              padding: '0.45rem 0.6rem',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              background: role === 'patient' ? '#8b5cf6' : '#ffffff',
+              color: role === 'patient' ? '#ffffff' : '#8b5cf6',
+              border: '1px solid #8b5cf6',
+              borderRadius: 5,
+              cursor: 'pointer',
+              textAlign: 'center',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            👤 Patient (Reports)
+          </button>
+          <button
+            type="button"
+            onClick={() => quickFillRole('admin')}
+            style={{
+              padding: '0.45rem 0.6rem',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              background: role === 'admin' ? '#475569' : '#ffffff',
+              color: role === 'admin' ? '#ffffff' : '#475569',
+              border: '1px solid #475569',
+              borderRadius: 5,
+              cursor: 'pointer',
+              textAlign: 'center',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            🛡️ Admin (System)
+          </button>
+        </div>
       </div>
 
       {notice && (
@@ -135,38 +235,115 @@ export default function Login() {
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
         {isSignUp && (
-          <div>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: '0.4rem',
-                fontSize: '0.82rem',
-                fontWeight: 500,
-                color: '#334155'
-              }}
-            >
-              Full name
-            </label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Dr. Alex Morgan"
-              style={{
-                width: '100%',
-                padding: '0.62rem 0.85rem',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                fontFamily: 'inherit',
-                fontSize: '0.88rem',
-                color: '#0f172a',
-                boxSizing: 'border-box',
-                outline: 'none',
-                background: '#ffffff',
-                transition: 'border-color 0.15s ease'
-              }}
-            />
-          </div>
+          <>
+            <div>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: '0.4rem',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  color: '#334155'
+                }}
+              >
+                Select Account Role (Supabase Roles)
+              </label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.62rem 0.85rem',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  fontFamily: 'inherit',
+                  fontSize: '0.88rem',
+                  color: '#0f172a',
+                  boxSizing: 'border-box',
+                  background: '#ffffff',
+                  outline: 'none'
+                }}
+              >
+                <option value="operator">Operator (Field Health Worker / Image Capture Station)</option>
+                <option value="doctor">Doctor (Ophthalmologist / Diagnostic Specialist)</option>
+                <option value="patient">Patient (Individual Retinal Reports)</option>
+                <option value="admin">Admin (System &amp; Database Administration)</option>
+              </select>
+              <div style={{ marginTop: '0.3rem', fontSize: '0.74rem', color: '#64748b' }}>
+                {role === 'operator' && '✓ Operators have specialized patient intake, multi-image upload, and automatic quality rejection.'}
+                {role === 'doctor' && '✓ Doctors have diagnostic grading validation, quadrant summaries, and referral actions.'}
+                {role === 'patient' && '✓ Patients access personal screening status and retinal health reports.'}
+                {role === 'admin' && '✓ Admins manage system accounts, Supabase synchronization, and capacity models.'}
+              </div>
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: '0.4rem',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  color: '#334155'
+                }}
+              >
+                Full name
+              </label>
+              <input
+                type="text"
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Vikram Kumar"
+                style={{
+                  width: '100%',
+                  padding: '0.62rem 0.85rem',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  fontFamily: 'inherit',
+                  fontSize: '0.88rem',
+                  color: '#0f172a',
+                  boxSizing: 'border-box',
+                  outline: 'none',
+                  background: '#ffffff',
+                  transition: 'border-color 0.15s ease'
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: '0.4rem',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  color: '#334155'
+                }}
+              >
+                Phone Number
+              </label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="9876543210"
+                style={{
+                  width: '100%',
+                  padding: '0.62rem 0.85rem',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  fontFamily: 'inherit',
+                  fontSize: '0.88rem',
+                  color: '#0f172a',
+                  boxSizing: 'border-box',
+                  outline: 'none',
+                  background: '#ffffff',
+                  transition: 'border-color 0.15s ease'
+                }}
+              />
+            </div>
+          </>
         )}
 
         <div>

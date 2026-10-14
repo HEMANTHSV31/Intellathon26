@@ -127,11 +127,11 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const signup = async (email, password, fullName) => {
+  const signup = async (email, password, fullName, role = 'operator', phone = '') => {
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, fullName })
+      body: JSON.stringify({ email, password, fullName, role, phone })
     })
 
     const data = await res.json()
@@ -147,6 +147,14 @@ export function AuthProvider({ children }) {
 
     await saveOfflineAuthSession(data.user, data.token)
     return data
+  }
+
+  const switchRole = (newRole) => {
+    if (!user) return
+    const updatedUser = { ...user, role: newRole }
+    setUser(updatedUser)
+    localStorage.setItem('dr_user', JSON.stringify(updatedUser))
+    if (token) saveOfflineAuthSession(updatedUser, token).catch(() => {})
   }
 
   const checkEmail = async (email) => {
@@ -170,12 +178,14 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider
       value={{
         user,
+        role: user?.role || 'operator',
         token,
         loading,
         isAuthenticated: !!token && !!user,
         isOffline,
         login,
         signup,
+        switchRole,
         checkEmail,
         logout
       }}

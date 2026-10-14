@@ -3497,10 +3497,17 @@ let tf = typeof window !== "undefined" ? window.tf : null;
 
       // Persist clinical result to IndexedDB for offline rural health workers
       try {
-        const fileInput = document.getElementById("file-input");
-        const fileName = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0].name : "Fundus Capture";
+        const currentPatientId = window._currentPatientId || null;
+        const currentPatientName = window._currentPatientName || null;
+        const currentPatientPhone = window._currentPatientPhone || null;
+        const currentEye = window._currentPatientEye || (state.lastAnatomy?.eye ? (state.lastAnatomy.eye.includes('Right') ? 'OD' : 'OS') : null);
+
         const screeningRecord = {
           fileName,
+          patientId: currentPatientId,
+          patientName: currentPatientName,
+          patientPhone: currentPatientPhone,
+          eye: currentEye,
           timestamp: Date.now(),
           qualityVerdict: state.lastQuality?.verdict || "usable",
           qualityReason: state.lastQuality?.reason || "",
@@ -3522,6 +3529,24 @@ let tf = typeof window !== "undefined" ? window.tf : null;
           fileType: file.type || "image/jpeg",
           imageData: working.toDataURL("image/jpeg", 0.88)
         });
+
+        // Also push directly to Supabase if reachable
+        try {
+          const token = localStorage.getItem('dr_token');
+          const hdrs = { 'Content-Type': 'application/json' };
+          if (token) hdrs['Authorization'] = `Bearer ${token}`;
+          await fetch('/api/screenings/upload', {
+            method: 'POST',
+            headers: hdrs,
+            body: JSON.stringify({
+              id: 'scr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+              ...screeningRecord,
+              imageData: working.toDataURL("image/jpeg", 0.85)
+            })
+          });
+        } catch (supaErr) {
+          console.log('[Supabase sync] Saved to local queue, will sync when online:', supaErr.message);
+        }
       } catch (saveRecErr) {
         console.warn("Could not persist screening report or image to IndexedDB:", saveRecErr);
       }
@@ -3532,6 +3557,72 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     } finally{
       $("#run-button").disabled = false;
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // IMAGE QUALITY VALIDATION FOR INTAKE & UPLOAD
+  // ---------------------------------------------------------------------
+  export async function validateImageQuality(file) {
+    try {
+      const img = await loadImageFile(file);
+      if (!img || img.width === 0 || img.height === 0) {
+        return {
+          valid: false,
+          reason: "Unable to read image file data. The file may be corrupt or not a valid image format."
+        };
+      }
+
+      // 1. Resolution Check:
+      // A fundus photograph below 256x256 lacks retinal micro-details (microaneurysms are 10-50um)
+      // and cannot be reliably upscaled without hallucinating or losing diagnostic evidence.
+      if (img.width < 256 || img.height < 256) {
+        return {
+          valid: false,
+          reason: `Image resolution (${img.width}×${img.height} px) is too low to be upscaled or assessed with diagnostic reliability. Minimum resolution required is 256×256 px. Please upload a full-resolution fundus capture.`
+        };
+      }
+
+      const tempCanvas = document.createElement("canvas");
+      drawToCanvas(img, tempCanvas, WORKING_MAX_DIM);
+
+      const metrics = computeMetrics(tempCanvas);
+      const verdict = assessQuality(metrics);
+
+      if (verdict.verdict === "reject") {
+        return {
+          valid: false,
+          reason: verdict.reason || "Image quality too low to analyze. Recapture with proper illumination and focus.",
+          metrics,
+          width: img.width,
+          height: img.height
+        };
+      }
+
+      return {
+        valid: true,
+        verdict: verdict.verdict,
+        reasons: verdict.reasons || [],
+        metrics,
+        width: img.width,
+        height: img.height,
+        thumbnail: tempCanvas.toDataURL("image/jpeg", 0.82)
+      };
+    } catch (err) {
+      return {
+        valid: false,
+        reason: "Failed to validate image quality: " + (err.message || err)
+      };
+    }
+  }
+
+  export async function runPipelineWithMeta(file, patientMeta) {
+    if (patientMeta) {
+      window._currentPatientId = patientMeta.patientId;
+      window._currentPatientName = patientMeta.patientName;
+      window._currentPatientPhone = patientMeta.patientPhone;
+      window._currentPatientEye = patientMeta.eye;
+    }
+    return runPipeline(file);
   }
 
   // ---------------------------------------------------------------------

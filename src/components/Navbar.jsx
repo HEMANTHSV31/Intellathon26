@@ -2,7 +2,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function Navbar() {
-  const { isAuthenticated, user, logout } = useAuth()
+  const { isAuthenticated, user, role, switchRole, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -111,12 +111,38 @@ export default function Navbar() {
         )}
       </div>
 
-      {/* Auth Actions in Navbar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+      {/* Auth Actions & Demo Role Switcher in Navbar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexShrink: 0 }}>
         {isAuthenticated ? (
           <>
-            <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
-              {user?.email}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#f8fafc', padding: '3px 8px', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+              <span style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 600 }}>ROLE:</span>
+              <select
+                value={user?.role || 'operator'}
+                onChange={(e) => switchRole && switchRole(e.target.value)}
+                title="Switch demo role to preview different views"
+                style={{
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  color: user?.role === 'operator' ? '#0d7a63' : user?.role === 'doctor' ? '#0284c7' : user?.role === 'patient' ? '#7c3aed' : '#334155',
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                <option value="operator">📸 Operator</option>
+                <option value="doctor">🩺 Doctor</option>
+                <option value="patient">👤 Patient</option>
+                <option value="admin">🛡️ Admin</option>
+              </select>
+            </div>
+
+            <span style={{ fontSize: '0.82rem', color: '#64748b', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user?.email}>
+              {user?.fullName || user?.email}
             </span>
             <button
               onClick={handleLogout}
