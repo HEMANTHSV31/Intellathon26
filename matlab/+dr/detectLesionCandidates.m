@@ -55,7 +55,7 @@ function out = detectLesionCandidates(I, anatomy)
     darkSeed   = seeds.darkSeed;
     brightSeed = seeds.brightSeed;
     vesselMask = seeds.vesselMask;
-    vesselZone = dr.dilateMask(vesselMask, 1);
+    vesselZone = dr.dilateMask(vesselMask, 2);
 
     [X, Y] = meshgrid(1:w, 1:h);
 
@@ -122,7 +122,7 @@ function out = detectLesionCandidates(I, anatomy)
     % one: that is the whole basis on which the vessel map was built.
     darkKeep   = seeds.tDark   * L.hystRatio;
     brightKeep = seeds.tBright * L.hystRatio;
-    darkLoose   = darkLoose   | darkSeed   | (seeds.roundDark   > darkKeep);
+    darkLoose   = (darkLoose   | darkSeed   | (seeds.roundDark   > darkKeep)) & ~vesselMask;
     brightLoose = brightLoose | brightSeed | (seeds.roundBright > brightKeep);
     darkLoose(~inside)   = false;
     brightLoose(~inside) = false;
@@ -238,13 +238,13 @@ function out = detectLesionCandidates(I, anatomy)
     % its own extent, so the worst case is that a lesion is reported slightly
     % smaller than it really is, never that it goes unreported. Seeds cannot
     % reintroduce vessels, because vessels never seed.
-    darkLeft   = darkSeed   & ~darkCovered;
+    darkLeft   = darkSeed   & ~darkCovered & ~vesselZone & ~vesselMask;
     brightLeft = brightSeed & ~brightCovered;
     if any(darkLeft(:))
-        classify(dr.regionFeatures(darkLeft,   darkDev,   grad, []), true);
+        classify(dr.regionFeatures(darkLeft,   darkDev,   grad, []), true, true);
     end
     if any(brightLeft(:))
-        classify(dr.regionFeatures(brightLeft, brightDev, grad, []), false);
+        classify(dr.regionFeatures(brightLeft, brightDev, grad, []), false, true);
     end
 
     % ---- Collect ----------------------------------------------------------
@@ -391,7 +391,8 @@ function out = detectLesionCandidates(I, anatomy)
         tf = mean(v) >= discColour.cut;
     end
 
-    function classify(comps, dark)
+    function classify(comps, dark, isPass2)
+        if nargin < 3, isPass2 = false; end
         for ci = 1:numel(comps)
             c = comps(ci);
 
@@ -401,15 +402,15 @@ function out = detectLesionCandidates(I, anatomy)
             % them are.
             if ~c.hasSeed,              rejected.noSeed   = rejected.noSeed+1;   continue; end
             if c.area < minArea,        rejected.tooSmall = rejected.tooSmall+1; continue; end
-            if c.area > maxArea,        rejected.tooLarge = rejected.tooLarge+1; continue; end
+            if c.area > maxArea,        rejected.tooLarge = rejected.tooLarge+1; if dark, darkCovered(c.pixels) = true; else, brightCovered(c.pixels) = true; end; continue; end
 
             if hasAnatomy
                 d2 = (c.cx - anatomy.disc.x)^2 + (c.cy - anatomy.disc.y)^2;
             else
                 d2 = Inf;
             end
-            if d2 <= (discR*1.15)^2
-                rejected.disc = rejected.disc + 1;  continue;
+            if d2 <= (discR*1.25)^2
+                rejected.disc = rejected.disc + 1; if dark, darkCovered(c.pixels) = true; else, brightCovered(c.pixels) = true; end; continue;
             end
 
             % Outside that circle the disc can still be the explanation for a
@@ -425,10 +426,10 @@ function out = detectLesionCandidates(I, anatomy)
             % finding worth more than everything this rule removes.
             if ~dark && d2 <= (discR*C.disc.peripapillaryMult)^2
                 if discTissueFrac(c) >= C.disc.tissueOverlap
-                    rejected.discTissue = rejected.discTissue + 1;  continue;
+                    rejected.discTissue = rejected.discTissue + 1; brightCovered(c.pixels) = true; continue;
                 end
                 if looksLikeDiscTissue(c)
-                    rejected.discColour = rejected.discColour + 1;  continue;
+                    rejected.discColour = rejected.discColour + 1; brightCovered(c.pixels) = true; continue;
                 end
             end
 
@@ -436,39 +437,46 @@ function out = detectLesionCandidates(I, anatomy)
             % a lesion: a shadow from pupil misalignment, or peripapillary
             % vignetting. Genuine peripheral lesions are small, so the rule is
             % keyed on size as well as on position and small ones stay.
-            if c.area >= edgeArtifactArea
-                de2 = (c.cx - ap.cx)^2 + (c.cy - ap.cy)^2;
-                if de2 > edgeR2
-                    rejected.edge = rejected.edge + 1;  continue;
-                end
+            de2 = (c.cx - ap.cx)^2 + (c.cy - ap.cy)^2;
+            if de2 > (ap.R*0.88)^2 || (c.area >= edgeArtifactArea && de2 > edgeR2)
+                rejected.edge = rejected.edge + 1; if dark, darkCovered(c.pixels) = true; else, brightCovered(c.pixels) = true; end; continue;
+            end
+            if dark && hasMacula && isfield(anatomy.fovea, "x") && hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y) <= (anatomy.maculaRadius * 0.45) && c.aspect <= 1.8
+                rejected.macula = rejected.macula + 1; darkCovered(c.pixels) = true; continue;
             end
 
-            if c.aspect > 4.0 && c.fillRatio < 0.30
-                rejected.streak = rejected.streak + 1;  continue;
+            % Elongated streak filter: true microaneurysms and dot hemorrhages are compact blobs
+            if dark && (c.aspect > 1.95 || (c.aspect > 1.55 && c.fillRatio < 0.48))
+                rejected.streak = rejected.streak + 1; darkCovered(c.pixels) = true; continue;
+            end
+            if ~dark && c.aspect > 3.5 && c.fillRatio < 0.28
+                rejected.streak = rejected.streak + 1; brightCovered(c.pixels) = true; continue;
             end
 
-            % A region lying almost entirely on the vessel map is a piece of
-            % vessel, whatever seeded it. The threshold is high on purpose: a
-            % lesion touching a vessel overlaps it partially and must survive.
-            if nnz(vesselZone(c.pixels))/numel(c.pixels) > L.vesselOverlapReject
-                rejected.vessel = rejected.vessel + 1;  continue;
+            vOverlap = nnz(vesselZone(c.pixels))/numel(c.pixels);
+            if vOverlap > L.vesselOverlapReject || (dark && c.aspect > 1.4 && vOverlap > 0.18)
+                rejected.vessel = rejected.vessel + 1; darkCovered(c.pixels) = true; continue;
             end
 
-            % Crossings, bifurcations, bends and choroidal mottling answer the
-            % roundness test at one element length exactly as a lesion does. They
-            % are told apart by whether the response stops growing when the
-            % element does: a lesion is bounded, they are not.
             if failsSaturation(c, dark)
-                rejected.unbounded = rejected.unbounded + 1;  continue;
+                rejected.unbounded = rejected.unbounded + 1;
+                if dark, darkCovered(c.pixels) = true; else, brightCovered(c.pixels) = true; end
+                continue;
             end
 
             onVessel = false;
             if dark && c.area <= junctionMaxArea
                 ctx = dr.vesselArms(c.cx, c.cy, c.area, vesselZone, junctionArmLen);
                 if dr.isVesselJunction(ctx)
-                    rejected.junction = rejected.junction + 1;  continue;
+                    rejected.junction = rejected.junction + 1; darkCovered(c.pixels) = true; continue;
                 end
-                onVessel = dr.isThroughVessel(ctx) || ctx.arms >= 1;
+                if dr.isThroughVessel(ctx)
+                    rejected.vessel = rejected.vessel + 1; darkCovered(c.pixels) = true; continue;
+                end
+                onVessel = ctx.arms >= 1;
+            end
+            if isPass2 && dark && (vOverlap > 0.05 || c.aspect > 1.35 || failsSaturation(c, dark))
+                rejected.vessel = rejected.vessel + 1; continue;
             end
 
             if dark
