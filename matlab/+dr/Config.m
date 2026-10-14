@@ -65,14 +65,14 @@ C.cam.featherFrac    = 0.7;
 % an absolute floor. Both are needed: the multiple adapts to the camera, the
 % floor stops a very clean image from dropping its threshold into the texture.
 C.lesion.darkK   = 3.5;
-C.lesion.brightK = 4.0;
+C.lesion.brightK = 3.2;             % tuned for improved CWS sensitivity
 C.lesion.darkFloor   = 10;
-C.lesion.brightFloor = 12;
+C.lesion.brightFloor = 8;           % captures subtle soft cotton wool spots
 C.lesion.darkContrastFloor   = 9;
-C.lesion.brightContrastFloor = 11;
-C.lesion.minContrastK = 3.0;
+C.lesion.brightContrastFloor = 7.5; % accommodates perimacular dark background transitions
+C.lesion.minContrastK = 2.8;
 
-C.lesion.cwsMinAreaFrac = 0.0004;   % cotton wool spots are a quarter disc across
+C.lesion.cwsMinAreaFrac = 0.00008;  % increased sensitivity for localized perimacular CWS (~50 px)
 C.lesion.edgeZoneFrac      = 0.80;  % beyond this fraction of the aperture radius
 C.lesion.edgeArtifactAreaFrac = 0.0015;  % a region this large is a rim artifact
 C.lesion.hystRatio = 0.45;          % permissive threshold, as a fraction of strict
@@ -93,7 +93,7 @@ C.lesion.linearSEFrac = 0.014;
 C.lesion.linearOrientations = 12;
 C.lesion.seedTailQ = 0.97;
 C.lesion.seedFloorDark = 6;
-C.lesion.seedFloorBright = 8;
+C.lesion.seedFloorBright = 5.5;
 
 % Scale saturation. A bounded blob is already filled at the element matching its
 % own width, so the next element up adds nothing; anything that continues past
@@ -102,7 +102,7 @@ C.lesion.seedFloorBright = 8;
 C.lesion.saturationSEMult = 2.0;
 C.lesion.saturationLadder = 3;      % seL, 2*seL, 4*seL
 C.lesion.saturationOrientations = 6;
-C.lesion.saturationMaxGrowth = 1.10;
+C.lesion.saturationMaxGrowth = 1.12;
 
 % Vessel junction test. Where two vessels cross, where one branches and at the
 % apex of a tight bend there is no direction in which the structure is straight,

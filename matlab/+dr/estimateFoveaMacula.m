@@ -108,12 +108,15 @@ function fm = estimateFoveaMacula(I, disc)
     % is the nasal side - no need to know OD from OS.
     if (fovea(1) - disc.x) >= 0
         nasalSide = "left";
+        eyeLateralization = "Right Eye (OD)";
     else
         nasalSide = "right";
+        eyeLateralization = "Left Eye (OS)";
     end
 
     fm = struct("fovea", struct("x", fovea(1), "y", fovea(2)), ...
                 "maculaRadius", disc.radius*2*1.1, ...
                 "nasalSide", nasalSide, ...
+                "eye", eyeLateralization, ...
                 "evidence", evidence);
 end

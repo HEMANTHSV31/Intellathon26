@@ -60,21 +60,21 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // finds fainter lesions and more noise; MIN_CONTRAST_K is the backstop that
   // keeps that trade from turning into speckle.
   const DARK_K = 3.5;
-  const BRIGHT_K = 4.0;
-  let MIN_CONTRAST_K = 3.0;
+  const BRIGHT_K = 3.2;
+  let MIN_CONTRAST_K = 2.8;
   // Absolute floors in grey levels. Without these the detector collapses on a
   // smooth image: a low noise estimate drives the adaptive threshold down to a
   // few grey levels, and normal choroidal texture then reads as lesions. A real
   // microaneurysm sits well below its background and a real exudate well above,
   // so nothing genuine is lost by refusing to look below these.
   const DARK_FLOOR = 10;
-  const BRIGHT_FLOOR = 12;
+  const BRIGHT_FLOOR = 8;
   const DARK_CONTRAST_FLOOR = 9;
-  const BRIGHT_CONTRAST_FLOOR = 11;
+  const BRIGHT_CONTRAST_FLOOR = 7.5;
   // Cotton wool spots are a quarter to a half disc diameter across. Anything
   // small and soft-edged is far more likely to be defocus or an artefact, so
   // the class carries a size requirement rather than accepting every soft blob.
-  const CWS_MIN_AREA_FRAC = 0.0004;
+  const CWS_MIN_AREA_FRAC = 0.00008;
   // Anything sizeable this far out from the centre of the aperture is an imaging
   // artifact, not a lesion: shadows from pupil misalignment, peripapillary
   // crescents and lens flare all live at the edge of the field and can be large.
@@ -213,7 +213,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // loosening the cut from 1.05 to 1.10 recovers three lesions per three retinas
   // for one extra false mark; past 1.15 the false marks climb without buying any
   // further recall.
-  let SATURATION_MAX_GROWTH = 1.10;
+  let SATURATION_MAX_GROWTH = 1.12;
   // A region is only discarded as vessel when this much of it lies on the vessel
   // map. Set too low, lesions touching a vessel are lost with it.
   const VESSEL_OVERLAP_REJECT = 0.78;
@@ -1335,15 +1335,17 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     // The disc is nasal to the fovea in either eye, so the side the disc sits on
     // is the nasal side, with no need to know OD from OS.
     const nasalSide = (fovea.x - disc.x) >= 0 ? "left" : "right";
-    return { fovea, maculaRadius: disc.radius*2*1.1, dir:{x:sign, y:0}, nasalSide, evidence };
+    const eye = nasalSide === "left" ? "Right Eye (OD)" : "Left Eye (OS)";
+    return { fovea, maculaRadius: disc.radius*2*1.1, dir:{x:sign, y:0}, nasalSide, eye, evidence };
   }
 
-  function quadrantLabel(px, py, disc, nasalSide){
+  function quadrantLabel(px, py, disc, nasalSide, fovea){
     const vertical = py < disc.y ? "Superior" : "Inferior";
-    const leftOfDisc = px < disc.x;
+    const splitX = (fovea && typeof fovea.x === "number") ? ((disc.x + fovea.x) / 2) : disc.x;
+    const leftOfMid = px < splitX;
     const horizontal = (nasalSide === "left")
-      ? (leftOfDisc ? "Nasal" : "Temporal")
-      : (leftOfDisc ? "Temporal" : "Nasal");
+      ? (leftOfMid ? "Nasal" : "Temporal")
+      : (leftOfMid ? "Temporal" : "Nasal");
     return `${vertical}-${horizontal}`;
   }
 
@@ -1566,7 +1568,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       haloText(ctx, String(n), b.cx, clamp(b.cy - r - 3, fontPx, h-2), "center", "bottom", true, fontPx);
       findings.push({
         index: n,
-        quadrant: anatomy ? quadrantLabel(b.cx, b.cy, anatomy.disc, anatomy.nasalSide) : "n/a",
+        quadrant: anatomy ? quadrantLabel(b.cx, b.cy, anatomy.disc, anatomy.nasalSide, anatomy.fovea) : "n/a",
         peak: b.peak,
         areaPct: (b.area/(w*h))*100,
         areaPx: b.area
@@ -1601,10 +1603,10 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     ctx.restore();
 
     // Quadrant names in the four frame corners
-    haloText(ctx, quadrantLabel(pad, pad, disc, anatomy.nasalSide), pad, pad, "left", "top", false, fontPx);
-    haloText(ctx, quadrantLabel(w-pad, pad, disc, anatomy.nasalSide), w-pad, pad, "right", "top", false, fontPx);
-    haloText(ctx, quadrantLabel(pad, h-pad, disc, anatomy.nasalSide), pad, h-pad, "left", "bottom", false, fontPx);
-    haloText(ctx, quadrantLabel(w-pad, h-pad, disc, anatomy.nasalSide), w-pad, h-pad, "right", "bottom", false, fontPx);
+    haloText(ctx, quadrantLabel(pad, pad, disc, anatomy.nasalSide, anatomy.fovea), pad, pad, "left", "top", false, fontPx);
+    haloText(ctx, quadrantLabel(w-pad, pad, disc, anatomy.nasalSide, anatomy.fovea), w-pad, pad, "right", "top", false, fontPx);
+    haloText(ctx, quadrantLabel(pad, h-pad, disc, anatomy.nasalSide, anatomy.fovea), pad, h-pad, "left", "bottom", false, fontPx);
+    haloText(ctx, quadrantLabel(w-pad, h-pad, disc, anatomy.nasalSide, anatomy.fovea), w-pad, h-pad, "right", "bottom", false, fontPx);
 
     // Macula (dashed) and fovea cross
     strokeCircle(ctx, fovea.x, fovea.y, anatomy.maculaRadius, [3,3]);
@@ -1658,6 +1660,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         : "from the area of the bright plateau — the extent could not be grown on this image, so this radius may undersize the disc"}</span></td></tr>
       <tr><td>Fovea centre (estimated)</td><td>x ${Math.round(anatomy.fovea.x)}, y ${Math.round(anatomy.fovea.y)} px<br><span class="small">${anatomy.evidence || "method not recorded"}</span></td></tr>
       <tr><td>Macula (estimated)</td><td>circle of radius ${Math.round(anatomy.maculaRadius)} px around the fovea</td></tr>
+      <tr><td>Eye lateralization</td><td><strong style="color:#0284c7">${anatomy.eye || (anatomy.nasalSide === "left" ? "Right Eye (OD)" : "Left Eye (OS)")}</strong></td></tr>
       <tr><td>Nasal side of frame</td><td>${nasalWord} of the disc axis (the disc is nasal to the fovea in either eye)</td></tr>
       <tr><td>Temporal side of frame</td><td>${temporalWord} of the disc axis (toward the macula)</td></tr>
     `;
@@ -2662,7 +2665,15 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         // vessel scores well on it simply for being a vessel. A candidate on the
         // vasculature therefore has to clear a higher bar than one in open
         // retina before the same figure means the same thing.
-        const bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
+        let bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
+        let isPerimacular = false;
+        if (anatomy && anatomy.fovea) {
+          const dFov = Math.hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y);
+          isPerimacular = dFov <= (anatomy.maculaRadius * 2.5);
+        }
+        if (isPerimacular && !dark) {
+          bar = bar * 0.75;
+        }
         if (c.maxContrast < bar){ rejected.weak++; return; }
 
         let type;
@@ -2671,7 +2682,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
             ? LESION_TYPES.MA : LESION_TYPES.HEM;
         } else if (c.meanGradient >= sharpEdgeThresh){
           type = LESION_TYPES.HE;
-        } else if (c.area >= cwsMinArea){
+        } else if (c.area >= cwsMinArea || (c.maxContrast >= bar*0.85 && c.area >= Math.max(4, Math.round(n*0.00003)))){
           type = LESION_TYPES.CWS;
         } else {
           rejected.weak++; return;
@@ -2756,7 +2767,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const grid = {};
     LESION_ORDER.forEach(k => { grid[k] = {}; QUADRANT_NAMES.forEach(q => grid[k][q] = 0); });
     lesions.candidates.forEach(c => {
-      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide);
+      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide, anatomy.fovea);
       if (grid[c.type.key] && grid[c.type.key][q] !== undefined) grid[c.type.key][q]++;
     });
     return grid;
@@ -3041,7 +3052,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const grid = {};
     LESION_ORDER.forEach(k => { grid[k] = {}; quadNames.forEach(q => grid[k][q] = 0); });
     lesions.candidates.forEach(c => {
-      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide);
+      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide, anatomy.fovea);
       if (grid[c.type.key] && grid[c.type.key][q] !== undefined) grid[c.type.key][q]++;
     });
 

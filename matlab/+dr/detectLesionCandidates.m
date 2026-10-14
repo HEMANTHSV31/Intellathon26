@@ -484,6 +484,18 @@ function out = detectLesionCandidates(I, anatomy)
             if onVessel
                 bar = bar * L.onVesselContrastFactor;
             end
+
+            % Perimacular tolerance: lesions near the fovea/macula (including cotton wool spots
+            % along the papillomacular bundle) reside on a darker retinal background.
+            isPerimacular = false;
+            if hasMacula && isfield(anatomy.fovea, "x")
+                dFovea = hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y);
+                isPerimacular = dFovea <= (anatomy.maculaRadius * 2.5);
+            end
+            if isPerimacular && ~dark
+                bar = bar * 0.75;
+            end
+
             if c.maxContrast < bar
                 rejected.weak = rejected.weak + 1;  continue;
             end
@@ -496,7 +508,7 @@ function out = detectLesionCandidates(I, anatomy)
                 end
             elseif c.meanGradient >= sharpEdgeThresh
                 typeKey = "HE";
-            elseif c.area >= cwsMinArea
+            elseif c.area >= cwsMinArea || (c.maxContrast >= bar*0.85 && c.area >= max(4, round(n*0.00003)))
                 typeKey = "CWS";
             else
                 rejected.weak = rejected.weak + 1;  continue;
