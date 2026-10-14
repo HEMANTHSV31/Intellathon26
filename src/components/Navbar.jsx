@@ -162,6 +162,7 @@ export default function Navbar() {
             </NavLink>
             <NavLink
               to="/login?mode=signup"
+              className="nav-btn-signup"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -172,8 +173,8 @@ export default function Navbar() {
                 color: isSignUpActive ? '#ffffff' : '#0d7a63',
                 background: isSignUpActive ? '#0d7a63' : 'transparent',
                 border: '1.5px solid #0d7a63',
-                borderRadius: '6px',
-                padding: '0 1rem',
+                borderRadius: '5px',
+                padding: '0 0.95rem',
                 textDecoration: 'none',
                 boxSizing: 'border-box',
                 transition: 'all 0.15s ease'

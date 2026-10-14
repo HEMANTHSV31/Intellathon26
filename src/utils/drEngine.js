@@ -1,5 +1,7 @@
 // DR Screening Engine
 "use strict";
+import { saveOfflineScreening, saveUploadedImageToQueue } from './offlineDb';
+
 let tf = typeof window !== "undefined" ? window.tf : null;
 
   // ---------------------------------------------------------------------
@@ -386,16 +388,47 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         modelLoadPromise = null;
         return null;
       }
+
+      // Step 1: Check IndexedDB offline cache first (Instant offline load for rural clinics)
+      try {
+        updateModelStatus("loading", "Checking IndexedDB offline storage for classifier model…");
+        const idbModel = await tf.loadLayersModel('indexeddb://dr-classifier-model');
+        if (idbModel) {
+          tf.tidy(() => { idbModel.predict(tf.zeros([1,224,224,3])); });
+          state.model = idbModel;
+          state.modelReady = true;
+          state.modelLoadAttempted = true;
+          updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded from IndexedDB offline storage (Rural Ready).");
+          const runBtn = $("#run-button");
+          const fileInp = $("#file-input");
+          if (runBtn && fileInp) runBtn.disabled = !fileInp.files || fileInp.files.length === 0;
+          return idbModel;
+        }
+      } catch (idbErr) {
+        console.log("Model not yet in IndexedDB, attempting network download for initial cache:", idbErr?.message || idbErr);
+      }
+
+      // Step 2: Fallback to network endpoints & automatically cache in IndexedDB
       for (const url of MODEL_URLS){
         try{
-          updateModelStatus("loading", "Loading classifier model (MobileNet, TensorFlow.js)…");
+          updateModelStatus("loading", "Downloading classifier model (MobileNet, TensorFlow.js)…");
           const m = await tf.loadLayersModel(url);
           // warm-up pass so the first real prediction isn't slowed by lazy graph compilation
           tf.tidy(() => { m.predict(tf.zeros([1,224,224,3])); });
           state.model = m;
           state.modelReady = true;
           state.modelLoadAttempted = true;
-          updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded client-side.");
+
+          // Automatically cache to IndexedDB for future offline usage in rural locations
+          try {
+            await m.save('indexeddb://dr-classifier-model');
+            console.log("Classifier model cached to IndexedDB for offline rural use.");
+            updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded and cached to IndexedDB for offline rural use.");
+          } catch (saveErr) {
+            console.warn("Could not cache model to IndexedDB:", saveErr);
+            updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded client-side.");
+          }
+
           const runBtn = $("#run-button");
           const fileInp = $("#file-input");
           if (runBtn && fileInp) runBtn.disabled = !fileInp.files || fileInp.files.length === 0;
@@ -3324,6 +3357,28 @@ let tf = typeof window !== "undefined" ? window.tf : null;
           "This image could not be assessed at all, so nothing here rules anything out.",
           ["the image failed the quality check: " + (verdict.reason || "quality too low to analyse"),
            "recapture if you can, and refer if a usable image cannot be obtained"]);
+        
+        try {
+          await saveUploadedImageToQueue({
+            fileName: file.name || "Fundus Image (Rejected)",
+            fileSize: file.size || 0,
+            fileType: file.type || "image/jpeg",
+            imageData: working.toDataURL("image/jpeg", 0.85),
+            timestamp: Date.now(),
+            qualityVerdict: "reject",
+            qualityReason: verdict.reason || "Image quality too low to analyze",
+            drPrediction: "Rejected - Inadequate Quality",
+            drConfidence: 0,
+            drScore: 0,
+            referable: true,
+            icdrGrade: "Unassessable",
+            recommendations: ["Recapture if possible; refer if usable image cannot be obtained."],
+            lesionCounts: {}
+          });
+        } catch (err) {
+          console.warn("Could not enqueue rejected image in IndexedDB:", err);
+        }
+
         $("#run-button").disabled = false;
         return; // do not proceed to inference
       }
@@ -3446,6 +3501,37 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       // SUMMARY
       showStep("report");
       renderReport();
+
+      // Persist clinical result to IndexedDB for offline rural health workers
+      try {
+        const fileInput = document.getElementById("file-input");
+        const fileName = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0].name : "Fundus Capture";
+        const screeningRecord = {
+          fileName,
+          timestamp: Date.now(),
+          qualityVerdict: state.lastQuality?.verdict || "usable",
+          qualityReason: state.lastQuality?.reason || "",
+          drPrediction: state.lastGrading?.prediction || (state.lastSeverity?.referable ? "Referable DR suspected" : "Normal"),
+          drConfidence: state.lastGrading?.confidence || 0,
+          drScore: state.lastGrading?.drScore || 0,
+          referable: !!state.lastSeverity?.referable,
+          icdrGrade: state.lastSeverity?.gradeText || "ICDR Staged",
+          recommendations: state.lastSeverity?.reasons || [],
+          lesionCounts: state.lastLesions?.counts || {}
+        };
+
+        await saveOfflineScreening(screeningRecord);
+
+        // Store uploaded image in IndexedDB until server confirms receipt
+        await saveUploadedImageToQueue({
+          ...screeningRecord,
+          fileSize: file.size || 0,
+          fileType: file.type || "image/jpeg",
+          imageData: working.toDataURL("image/jpeg", 0.88)
+        });
+      } catch (saveRecErr) {
+        console.warn("Could not persist screening report or image to IndexedDB:", saveRecErr);
+      }
 
     } catch(err){
       console.error(err);

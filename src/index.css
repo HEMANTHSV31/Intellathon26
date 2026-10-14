@@ -102,12 +102,13 @@
   a, a:hover, a:focus, a:active, a:visited { text-decoration: none; }
 
   /* ---- site navigation, shared across pages ---- */
-  .site-nav{display:flex;gap:1.5rem;flex-wrap:nowrap;align-items:center;border:none !important;border-bottom:none !important;}
-  .site-nav .brand{font-weight:700;font-size:.92rem;text-decoration:none !important;border-bottom:none !important;}
+  .site-nav{display:flex;gap:1.5rem;flex-wrap:nowrap;align-items:center;border:none !important;}
+  .site-nav .brand{font-weight:700;font-size:.92rem;text-decoration:none !important;}
   .site-nav a{color:var(--grey4);text-decoration:none !important;box-shadow:none !important;}
   .site-nav a:hover{color:var(--ink);text-decoration:none !important;}
   .site-nav a[aria-current="page"]{color:var(--ink);font-weight:600;text-decoration:none !important;}
   .site-nav a.active-link{color:var(--ink);font-weight:600;text-decoration:none !important;}
+  .site-nav a.nav-btn-signup{border:1.5px solid #0d7a63 !important;}
   /* ---- landing page ---- */
   .lede{font-size:1.05rem;line-height:1.6;margin:0 0 1.5rem;}
   .diagram{width:100%;height:auto;display:block;margin:1rem 0 .4rem;}
