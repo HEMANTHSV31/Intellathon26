@@ -1,6 +1,5 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import RuralStatusBadge from './RuralStatusBadge'
 
 export default function Navbar() {
   const { isAuthenticated, user, logout } = useAuth()
@@ -114,7 +113,6 @@ export default function Navbar() {
 
       {/* Auth Actions in Navbar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
-        <RuralStatusBadge />
         {isAuthenticated ? (
           <>
             <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
