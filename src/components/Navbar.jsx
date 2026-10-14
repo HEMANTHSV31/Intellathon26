@@ -154,7 +154,6 @@ export default function Navbar() {
                 fontWeight: isSignInActive ? 600 : 500,
                 color: isSignInActive ? '#0d7a63' : '#475569',
                 textDecoration: 'none',
-                borderBottom: 'none',
                 padding: '0 0.75rem',
                 boxSizing: 'border-box'
               }}
@@ -163,6 +162,7 @@ export default function Navbar() {
             </NavLink>
             <NavLink
               to="/login?mode=signup"
+              className="nav-btn-signup"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -172,11 +172,10 @@ export default function Navbar() {
                 fontWeight: 600,
                 color: isSignUpActive ? '#ffffff' : '#0d7a63',
                 background: isSignUpActive ? '#0d7a63' : 'transparent',
-                border: '1px solid #0d7a63',
+                border: '1.5px solid #0d7a63',
                 borderRadius: '5px',
                 padding: '0 0.95rem',
                 textDecoration: 'none',
-                borderBottom: 'none',
                 boxSizing: 'border-box',
                 transition: 'all 0.15s ease'
               }}
