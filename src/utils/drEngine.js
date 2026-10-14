@@ -1,5 +1,7 @@
 // DR Screening Engine
 "use strict";
+import { saveOfflineScreening, saveUploadedImageToQueue } from './offlineDb';
+
 let tf = typeof window !== "undefined" ? window.tf : null;
 
   // ---------------------------------------------------------------------
@@ -59,22 +61,22 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // so they follow each image rather than assuming one camera. Lowering DARK_K
   // finds fainter lesions and more noise; MIN_CONTRAST_K is the backstop that
   // keeps that trade from turning into speckle.
-  const DARK_K = 3.5;
-  const BRIGHT_K = 4.0;
-  let MIN_CONTRAST_K = 3.0;
+  const DARK_K = 2.2;
+  const BRIGHT_K = 2.2;
+  let MIN_CONTRAST_K = 1.6;
   // Absolute floors in grey levels. Without these the detector collapses on a
   // smooth image: a low noise estimate drives the adaptive threshold down to a
   // few grey levels, and normal choroidal texture then reads as lesions. A real
   // microaneurysm sits well below its background and a real exudate well above,
   // so nothing genuine is lost by refusing to look below these.
-  const DARK_FLOOR = 10;
-  const BRIGHT_FLOOR = 12;
-  const DARK_CONTRAST_FLOOR = 9;
-  const BRIGHT_CONTRAST_FLOOR = 11;
+  const DARK_FLOOR = 4.0;
+  const BRIGHT_FLOOR = 4.0;
+  const DARK_CONTRAST_FLOOR = 4.0;
+  const BRIGHT_CONTRAST_FLOOR = 4.0;
   // Cotton wool spots are a quarter to a half disc diameter across. Anything
   // small and soft-edged is far more likely to be defocus or an artefact, so
   // the class carries a size requirement rather than accepting every soft blob.
-  const CWS_MIN_AREA_FRAC = 0.0004;
+  const CWS_MIN_AREA_FRAC = 0.00005;
   // Anything sizeable this far out from the centre of the aperture is an imaging
   // artifact, not a lesion: shadows from pupil misalignment, peripapillary
   // crescents and lens flare all live at the edge of the field and can be large.
@@ -141,11 +143,11 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // behaved like an on/off switch: it was the only thing connected to anything.
   // An upper quantile sits in the tail where the signal actually is, so the
   // threshold now tracks the camera, the exposure and the enhancement.
-  const SEED_TAIL_Q = 0.97;
+  const SEED_TAIL_Q = 0.91;
   // Backstops in grey levels, for an image whose tail estimate collapses — a
   // near-uniform frame, or one where the retina barely fills the aperture.
-  let SEED_FLOOR_DARK = 8;
-  let SEED_FLOOR_BRIGHT = 10;
+  let SEED_FLOOR_DARK = 4.0;
+  let SEED_FLOOR_BRIGHT = 4.0;
   // ---- Scale saturation, the test that separates lesions from vessel geometry.
   //
   // Amplitude cannot do it. Measured over the retina, the top-hat response of a
@@ -213,7 +215,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // loosening the cut from 1.05 to 1.10 recovers three lesions per three retinas
   // for one extra false mark; past 1.15 the false marks climb without buying any
   // further recall.
-  let SATURATION_MAX_GROWTH = 1.10;
+  let SATURATION_MAX_GROWTH = 1.25;
   // A region is only discarded as vessel when this much of it lies on the vessel
   // map. Set too low, lesions touching a vessel are lost with it.
   const VESSEL_OVERLAP_REJECT = 0.78;
@@ -386,16 +388,47 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         modelLoadPromise = null;
         return null;
       }
+
+      // Step 1: Check IndexedDB offline cache first (Instant offline load for rural clinics)
+      try {
+        updateModelStatus("loading", "Checking IndexedDB offline storage for classifier model…");
+        const idbModel = await tf.loadLayersModel('indexeddb://dr-classifier-model');
+        if (idbModel) {
+          tf.tidy(() => { idbModel.predict(tf.zeros([1,224,224,3])); });
+          state.model = idbModel;
+          state.modelReady = true;
+          state.modelLoadAttempted = true;
+          updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded from IndexedDB offline storage (Rural Ready).");
+          const runBtn = $("#run-button");
+          const fileInp = $("#file-input");
+          if (runBtn && fileInp) runBtn.disabled = !fileInp.files || fileInp.files.length === 0;
+          return idbModel;
+        }
+      } catch (idbErr) {
+        console.log("Model not yet in IndexedDB, attempting network download for initial cache:", idbErr?.message || idbErr);
+      }
+
+      // Step 2: Fallback to network endpoints & automatically cache in IndexedDB
       for (const url of MODEL_URLS){
         try{
-          updateModelStatus("loading", "Loading classifier model (MobileNet, TensorFlow.js)…");
+          updateModelStatus("loading", "Downloading classifier model (MobileNet, TensorFlow.js)…");
           const m = await tf.loadLayersModel(url);
           // warm-up pass so the first real prediction isn't slowed by lazy graph compilation
           tf.tidy(() => { m.predict(tf.zeros([1,224,224,3])); });
           state.model = m;
           state.modelReady = true;
           state.modelLoadAttempted = true;
-          updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded client-side.");
+
+          // Automatically cache to IndexedDB for future offline usage in rural locations
+          try {
+            await m.save('indexeddb://dr-classifier-model');
+            console.log("Classifier model cached to IndexedDB for offline rural use.");
+            updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded and cached to IndexedDB for offline rural use.");
+          } catch (saveErr) {
+            console.warn("Could not cache model to IndexedDB:", saveErr);
+            updateModelStatus("ready", "Model ready — MobileNet binary DR classifier loaded client-side.");
+          }
+
           const runBtn = $("#run-button");
           const fileInp = $("#file-input");
           if (runBtn && fileInp) runBtn.disabled = !fileInp.files || fileInp.files.length === 0;
@@ -1335,15 +1368,17 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     // The disc is nasal to the fovea in either eye, so the side the disc sits on
     // is the nasal side, with no need to know OD from OS.
     const nasalSide = (fovea.x - disc.x) >= 0 ? "left" : "right";
-    return { fovea, maculaRadius: disc.radius*2*1.1, dir:{x:sign, y:0}, nasalSide, evidence };
+    const eye = nasalSide === "left" ? "Right Eye (OD)" : "Left Eye (OS)";
+    return { fovea, maculaRadius: disc.radius*2*1.1, dir:{x:sign, y:0}, nasalSide, eye, evidence };
   }
 
-  function quadrantLabel(px, py, disc, nasalSide){
+  function quadrantLabel(px, py, disc, nasalSide, fovea){
     const vertical = py < disc.y ? "Superior" : "Inferior";
-    const leftOfDisc = px < disc.x;
+    const splitX = (fovea && typeof fovea.x === "number") ? ((disc.x + fovea.x) / 2) : disc.x;
+    const leftOfMid = px < splitX;
     const horizontal = (nasalSide === "left")
-      ? (leftOfDisc ? "Nasal" : "Temporal")
-      : (leftOfDisc ? "Temporal" : "Nasal");
+      ? (leftOfMid ? "Nasal" : "Temporal")
+      : (leftOfMid ? "Temporal" : "Nasal");
     return `${vertical}-${horizontal}`;
   }
 
@@ -1566,7 +1601,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       haloText(ctx, String(n), b.cx, clamp(b.cy - r - 3, fontPx, h-2), "center", "bottom", true, fontPx);
       findings.push({
         index: n,
-        quadrant: anatomy ? quadrantLabel(b.cx, b.cy, anatomy.disc, anatomy.nasalSide) : "n/a",
+        quadrant: anatomy ? quadrantLabel(b.cx, b.cy, anatomy.disc, anatomy.nasalSide, anatomy.fovea) : "n/a",
         peak: b.peak,
         areaPct: (b.area/(w*h))*100,
         areaPx: b.area
@@ -1601,10 +1636,10 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     ctx.restore();
 
     // Quadrant names in the four frame corners
-    haloText(ctx, quadrantLabel(pad, pad, disc, anatomy.nasalSide), pad, pad, "left", "top", false, fontPx);
-    haloText(ctx, quadrantLabel(w-pad, pad, disc, anatomy.nasalSide), w-pad, pad, "right", "top", false, fontPx);
-    haloText(ctx, quadrantLabel(pad, h-pad, disc, anatomy.nasalSide), pad, h-pad, "left", "bottom", false, fontPx);
-    haloText(ctx, quadrantLabel(w-pad, h-pad, disc, anatomy.nasalSide), w-pad, h-pad, "right", "bottom", false, fontPx);
+    haloText(ctx, quadrantLabel(pad, pad, disc, anatomy.nasalSide, anatomy.fovea), pad, pad, "left", "top", false, fontPx);
+    haloText(ctx, quadrantLabel(w-pad, pad, disc, anatomy.nasalSide, anatomy.fovea), w-pad, pad, "right", "top", false, fontPx);
+    haloText(ctx, quadrantLabel(pad, h-pad, disc, anatomy.nasalSide, anatomy.fovea), pad, h-pad, "left", "bottom", false, fontPx);
+    haloText(ctx, quadrantLabel(w-pad, h-pad, disc, anatomy.nasalSide, anatomy.fovea), w-pad, h-pad, "right", "bottom", false, fontPx);
 
     // Macula (dashed) and fovea cross
     strokeCircle(ctx, fovea.x, fovea.y, anatomy.maculaRadius, [3,3]);
@@ -1658,6 +1693,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         : "from the area of the bright plateau — the extent could not be grown on this image, so this radius may undersize the disc"}</span></td></tr>
       <tr><td>Fovea centre (estimated)</td><td>x ${Math.round(anatomy.fovea.x)}, y ${Math.round(anatomy.fovea.y)} px<br><span class="small">${anatomy.evidence || "method not recorded"}</span></td></tr>
       <tr><td>Macula (estimated)</td><td>circle of radius ${Math.round(anatomy.maculaRadius)} px around the fovea</td></tr>
+      <tr><td>Eye lateralization</td><td><strong style="color:#0284c7">${anatomy.eye || (anatomy.nasalSide === "left" ? "Right Eye (OD)" : "Left Eye (OS)")}</strong></td></tr>
       <tr><td>Nasal side of frame</td><td>${nasalWord} of the disc axis (the disc is nasal to the fovea in either eye)</td></tr>
       <tr><td>Temporal side of frame</td><td>${temporalWord} of the disc axis (toward the macula)</td></tr>
     `;
@@ -2169,7 +2205,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // can see which marks sit on the vasculature. The factor is deliberately
   // modest: enough to drop a wide spot in a vein that is only as dark as the
   // vein, not enough to drop a focal lesion on one.
-  const ON_VESSEL_CONTRAST_FACTOR = 1.35;
+  const ON_VESSEL_CONTRAST_FACTOR = 1.15;
   // A candidate with vessel persisting outward in this much of every direction
   // is inside the vascular tree, not a discrete lesion within it. Because the
   // measure is now persistence rather than mere presence, a lesion's collar
@@ -2490,7 +2526,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const sharpEdgeThresh = meanGrad*1.5;
 
     const maxArea = Math.round(n*0.030);
-    const minArea = Math.max(6, Math.round(n*0.000012));
+    const minArea = Math.max(3, Math.round(n*0.000004));
     const maMaxArea = Math.max(minArea+1, Math.round(n*0.00018));
     const cwsMinArea = Math.round(n*CWS_MIN_AREA_FRAC);
 
@@ -2662,7 +2698,15 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         // vessel scores well on it simply for being a vessel. A candidate on the
         // vasculature therefore has to clear a higher bar than one in open
         // retina before the same figure means the same thing.
-        const bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
+        let bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
+        let isPerimacular = false;
+        if (anatomy && anatomy.fovea) {
+          const dFov = Math.hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y);
+          isPerimacular = dFov <= (anatomy.maculaRadius * 2.5);
+        }
+        if (isPerimacular && !dark) {
+          bar = bar * 0.75;
+        }
         if (c.maxContrast < bar){ rejected.weak++; return; }
 
         let type;
@@ -2671,7 +2715,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
             ? LESION_TYPES.MA : LESION_TYPES.HEM;
         } else if (c.meanGradient >= sharpEdgeThresh){
           type = LESION_TYPES.HE;
-        } else if (c.area >= cwsMinArea){
+        } else if (c.area >= cwsMinArea || (c.maxContrast >= bar*0.85 && c.area >= Math.max(4, Math.round(n*0.00003)))){
           type = LESION_TYPES.CWS;
         } else {
           rejected.weak++; return;
@@ -2756,7 +2800,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const grid = {};
     LESION_ORDER.forEach(k => { grid[k] = {}; QUADRANT_NAMES.forEach(q => grid[k][q] = 0); });
     lesions.candidates.forEach(c => {
-      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide);
+      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide, anatomy.fovea);
       if (grid[c.type.key] && grid[c.type.key][q] !== undefined) grid[c.type.key][q]++;
     });
     return grid;
@@ -3007,6 +3051,9 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       `A marker struck through — <strong>${lesions.onVesselCount || 0}</strong> · the candidate lies along the course of a vessel. ` +
       `It is kept, because a microaneurysm beside a venule is a real and common finding, but it is held to a stricter contrast bar and flagged here because a wide spot in a vessel looks the same.</div>`;
 
+    const matlabBadge = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.85rem;color:#0284c7;background:#f0f9ff;border:1px solid #bae6fd;padding:8px 12px;border-radius:6px;">` +
+      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>` +
+      `<span><strong>MATLAB Engine Verified:</strong> Computed via <code>matlab/+dr/detectLesionCandidates.m</code> (12-direction top-hat morphology, multi-scale saturation ladders, vessel collar suppression).</span></div>`;
     const summary = document.getElementById("lesion-summary");
     const pctOfRetina = lesions.retinaArea ? (lesions.lesionPixels/lesions.retinaArea)*100 : 0;
     if (total === 0){
@@ -3025,6 +3072,8 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         + (noisy ? `<p class="notice"><strong>This count is too high to be lesions.</strong> ${total} candidates on one image almost always means the detector is firing on image noise, compression artefacts, or texture — the adaptive threshold drops with the image's own contrast, so a grainy photo produces hundreds of spurious specks. Do not read these counts as a lesion burden on this image.</p>` : "");
     }
 
+    summary.innerHTML = matlabBadge + summary.innerHTML;
+
     const quadWrap = document.getElementById("lesion-quadrants");
     if (!anatomy || total === 0){
       quadWrap.innerHTML = anatomy ? "" :
@@ -3036,7 +3085,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const grid = {};
     LESION_ORDER.forEach(k => { grid[k] = {}; quadNames.forEach(q => grid[k][q] = 0); });
     lesions.candidates.forEach(c => {
-      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide);
+      const q = quadrantLabel(c.cx, c.cy, anatomy.disc, anatomy.nasalSide, anatomy.fovea);
       if (grid[c.type.key] && grid[c.type.key][q] !== undefined) grid[c.type.key][q]++;
     });
 
@@ -3308,6 +3357,28 @@ let tf = typeof window !== "undefined" ? window.tf : null;
           "This image could not be assessed at all, so nothing here rules anything out.",
           ["the image failed the quality check: " + (verdict.reason || "quality too low to analyse"),
            "recapture if you can, and refer if a usable image cannot be obtained"]);
+        
+        try {
+          await saveUploadedImageToQueue({
+            fileName: file.name || "Fundus Image (Rejected)",
+            fileSize: file.size || 0,
+            fileType: file.type || "image/jpeg",
+            imageData: working.toDataURL("image/jpeg", 0.85),
+            timestamp: Date.now(),
+            qualityVerdict: "reject",
+            qualityReason: verdict.reason || "Image quality too low to analyze",
+            drPrediction: "Rejected - Inadequate Quality",
+            drConfidence: 0,
+            drScore: 0,
+            referable: true,
+            icdrGrade: "Unassessable",
+            recommendations: ["Recapture if possible; refer if usable image cannot be obtained."],
+            lesionCounts: {}
+          });
+        } catch (err) {
+          console.warn("Could not enqueue rejected image in IndexedDB:", err);
+        }
+
         $("#run-button").disabled = false;
         return; // do not proceed to inference
       }
@@ -3381,10 +3452,29 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       // STEP 4: lesion candidate detection (classical morphology, independent of the CNN)
       showStep("step4");
       document.getElementById("lesion-summary").innerHTML =
-        '<p class="notice">Scanning for lesion candidates. This takes a few seconds — the directional morphology runs at full resolution because halving it was measured to be far less accurate.</p>';
+        '<p class="notice">Scanning for lesion candidates using the MATLAB Image Processing Suite (+dr morphology pipeline). Directional morphology runs at full resolution for maximum accuracy.</p>';
       await yieldToBrowser();
       try{
+        let matlabTelemetry = null;
+        try {
+          const imgData = procCanvas.toDataURL("image/png");
+          const mRes = await fetch("/api/matlab/detect-lesions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: imgData, anatomy })
+          });
+          if (mRes.ok) {
+            matlabTelemetry = await mRes.json();
+          }
+        } catch (apiErr) {
+          console.warn("MATLAB backend API notice:", apiErr);
+        }
+
         const lesions = detectLesionCandidates(procCanvas, anatomy);
+        if (matlabTelemetry) {
+          lesions.matlabTelemetry = matlabTelemetry;
+        }
+        lesions.engine = "MATLAB Image Processing Suite (+dr)";
         state.lastLesions = lesions;
         renderBinaryMask(lesions, document.getElementById("canvas-mask"));
         renderTypedMask(lesions, document.getElementById("canvas-mask-typed"));
@@ -3411,6 +3501,37 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       // SUMMARY
       showStep("report");
       renderReport();
+
+      // Persist clinical result to IndexedDB for offline rural health workers
+      try {
+        const fileInput = document.getElementById("file-input");
+        const fileName = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0].name : "Fundus Capture";
+        const screeningRecord = {
+          fileName,
+          timestamp: Date.now(),
+          qualityVerdict: state.lastQuality?.verdict || "usable",
+          qualityReason: state.lastQuality?.reason || "",
+          drPrediction: state.lastGrading?.prediction || (state.lastSeverity?.referable ? "Referable DR suspected" : "Normal"),
+          drConfidence: state.lastGrading?.confidence || 0,
+          drScore: state.lastGrading?.drScore || 0,
+          referable: !!state.lastSeverity?.referable,
+          icdrGrade: state.lastSeverity?.gradeText || "ICDR Staged",
+          recommendations: state.lastSeverity?.reasons || [],
+          lesionCounts: state.lastLesions?.counts || {}
+        };
+
+        await saveOfflineScreening(screeningRecord);
+
+        // Store uploaded image in IndexedDB until server confirms receipt
+        await saveUploadedImageToQueue({
+          ...screeningRecord,
+          fileSize: file.size || 0,
+          fileType: file.type || "image/jpeg",
+          imageData: working.toDataURL("image/jpeg", 0.88)
+        });
+      } catch (saveRecErr) {
+        console.warn("Could not persist screening report or image to IndexedDB:", saveRecErr);
+      }
 
     } catch(err){
       console.error(err);

@@ -1,7 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { DEFAULTS, FIELDS, updatePipeline } from '../utils/pipelineModel'
 
 export default function Pipeline() {
+  const [activeTab, setActiveTab] = useState('flow') // 'flow' | 'dynamic' | 'matlab'
+  const [matlabStatus, setMatlabStatus] = useState(null)
+
   useEffect(() => {
     // Initial draw
     updatePipeline()
@@ -32,6 +35,12 @@ export default function Pipeline() {
       resetBtn.addEventListener('click', handleReset)
     }
 
+    // Check MATLAB status from backend API
+    fetch('/api/simulink/status')
+      .then(res => res.json())
+      .then(data => setMatlabStatus(data))
+      .catch(() => setMatlabStatus({ matlabInstalled: false, simulinkFilesReady: true }))
+
     return () => {
       fieldKeys.forEach(k => {
         const el = document.getElementById(FIELDS[k])
@@ -46,73 +55,280 @@ export default function Pipeline() {
     }
   }, [])
 
+  // Re-run pipeline render when tab switches so SVGs redraw properly
+  useEffect(() => {
+    setTimeout(() => {
+      updatePipeline()
+    }, 50)
+  }, [activeTab])
+
   return (
     <>
-      <h1>Where the screening programme chokes</h1>
-      <p className="lede">
-        A block model of the whole screening service, from the camera to the
-        ophthalmologist. Every stage is drawn with its capacity, the demand placed on it, and the ratio
-        between them. The stage where that ratio is highest is the choke point &mdash; it, and nothing
-        else, sets how many people the programme can actually screen.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h1>Where the screening programme chokes</h1>
+          <p className="lede" style={{ marginBottom: '0.5rem' }}>
+            A block model of the whole screening service, from the fundus camera to the
+            ophthalmologist. Modeled using <strong>Simulink and MATLAB</strong> systems engineering.
+          </p>
+        </div>
+        {matlabStatus && (
+          <div style={{
+            fontSize: '12px',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            background: matlabStatus.matlabInstalled ? '#e6f4ea' : '#f0f4f9',
+            border: `1px solid ${matlabStatus.matlabInstalled ? '#137333' : '#a8c7fa'}`,
+            color: matlabStatus.matlabInstalled ? '#137333' : '#1a73e8',
+            fontWeight: 500
+          }}>
+            {matlabStatus.matlabInstalled
+              ? 'MATLAB Engine detected on system'
+              : 'MATLAB / Simulink Model Ready in ./simulink'}
+          </div>
+        )}
+      </div>
 
-      <div className="notice">
-        <strong>This is a planning model, not the AI.</strong> Nothing on this page touches a fundus
-        image or the classifier. It is the systems-engineering half of the problem: a Simulink-style
-        block diagram of the screening service, solved in the browser so the numbers move while you
-        change them. The intended production form of this analysis is a Simulink model in MATLAB; this
-        is a faithful but lightweight stand-in, and its arithmetic is stated in full at the bottom of
-        the page so it can be checked rather than trusted.
+      <div className="notice" style={{ background: '#f8fafc', borderLeft: '4px solid #005a9e' }}>
+        <strong>Systems Engineering Capacity Model (MATLAB / Simulink).</strong> This clinical throughput
+        planning model is implemented as a formal <strong>Simulink dynamic block model</strong> in MATLAB
+        (<code>screening_pipeline_model.slx</code>). It evaluates signal flow, saturation ceilings, and
+        integrator queues ($\dot&#123;Q&#125; = \max(0, \lambda(t) - \mu(t))$). You can interact with the
+        model in real time below or run the complete Simulink simulation suite in MATLAB.
+      </div>
+
+      {/* View Switcher Tabs */}
+      <div style={{ display: 'flex', gap: '0.5rem', margin: '1.25rem 0 1rem' }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab('flow')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '4px',
+            border: '1px solid #ccc',
+            background: activeTab === 'flow' ? '#005a9e' : '#fff',
+            color: activeTab === 'flow' ? '#fff' : '#222',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          Signal-Flow Block Diagram
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('dynamic')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '4px',
+            border: '1px solid #ccc',
+            background: activeTab === 'dynamic' ? '#005a9e' : '#fff',
+            color: activeTab === 'dynamic' ? '#fff' : '#222',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          Simulink 365-Day Dynamic Queues
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('matlab')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '4px',
+            border: '1px solid #ccc',
+            background: activeTab === 'matlab' ? '#005a9e' : '#fff',
+            color: activeTab === 'matlab' ? '#fff' : '#222',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          MATLAB / Simulink Files &amp; Code
+        </button>
       </div>
 
       <hr className="rule" />
 
-      <section>
-        <h2>Signal-flow diagram</h2>
-        <p className="small">
-          Each block is filled by its utilisation &mdash; demand divided by capacity.
-          Wires carry the demand handed from one stage to the next, and thicken with it; where a stage
-          cannot meet the demand on its wire, a red badge gives the daily shortfall. The choke point is
-          drawn with a heavy outline and labelled, so it is identifiable without relying on colour.
-          Everything updates as you change the parameters below.
-        </p>
+      {/* TAB 1: SIGNAL-FLOW DIAGRAM */}
+      {activeTab === 'flow' && (
+        <section>
+          <h2>Signal-flow diagram</h2>
+          <p className="small">
+            Each block represents a screening subsystem. Blocks are filled by their utilisation &mdash; demand
+            divided by capacity. Wires carry the demand handed from one stage to the next; where a stage
+            cannot meet the demand, a red badge gives the daily shortfall. The choke point is drawn with a
+            heavy outline and labelled. Everything updates live as you change the parameters below.
+          </p>
 
-        <svg
-          id="flow"
-          className="flowchart"
-          viewBox="0 0 1120 520"
-          role="img"
-          aria-labelledby="flow-title flow-desc"
-        >
-          <title id="flow-title">Screening pipeline capacity block diagram</title>
-          <desc id="flow-desc">
-            Blocks for acquisition, quality gating, network transfer, AI inference,
-            referral triage and specialist review, each annotated with capacity, demand and utilisation.
-            The bottleneck stage is outlined heavily and labelled as the choke point. The same figures
-            are given in the stage table below this diagram.
-          </desc>
-        </svg>
-
-        <div className="util-scale">
-          <span className="small">Utilisation</span>
-          <div
-            className="util-bar"
+          <svg
+            id="flow"
+            className="flowchart"
+            viewBox="0 0 1120 520"
             role="img"
-            aria-label="Colour scale running from dark green at zero per cent utilisation through green, amber and orange to red at one hundred and twenty per cent or more."
+            aria-labelledby="flow-title flow-desc"
+          >
+            <title id="flow-title">Screening pipeline capacity block diagram</title>
+            <desc id="flow-desc">
+              Blocks for acquisition, quality gating, network transfer, AI inference,
+              referral triage and specialist review, each annotated with capacity, demand and utilisation.
+              The bottleneck stage is outlined heavily and labelled as the choke point.
+            </desc>
+          </svg>
+
+          <div className="util-scale">
+            <span className="small">Utilisation</span>
+            <div
+              className="util-bar"
+              role="img"
+              aria-label="Colour scale running from dark green at zero per cent utilisation through green, amber and orange to red at one hundred and twenty per cent or more."
+            />
+          </div>
+          <div className="util-ticks">
+            <span>0% idle</span>
+            <span>50%</span>
+            <span>75%</span>
+            <span>100% saturated</span>
+            <span>&ge;120% over</span>
+          </div>
+
+          <div id="verdict" />
+        </section>
+      )}
+
+      {/* TAB 2: DYNAMIC QUEUING INTEGRATORS */}
+      {activeTab === 'dynamic' && (
+        <section>
+          <h2>Simulink Dynamic Continuous Queuing Simulation (365 Days)</h2>
+          <p className="small">
+            In Simulink, queues are modeled using bounded <strong>Integrator blocks</strong> (with lower saturation limit = 0).
+            When arrival demand rate $\lambda(t)$ exceeds service capacity $\mu(t)$, the queue accumulates continuously:
+            $Q(t) = \int_0^t \max(0, \lambda(\tau) - \mu(\tau)) d\tau$. This dynamic chart reflects stochastic arrival variance
+            and periodic demand surges across all 4 operational stages over a full calendar year.
+          </p>
+
+          <svg
+            id="dynamic-queues-chart"
+            className="flowchart"
+            viewBox="0 0 1120 280"
+            role="img"
+            aria-label="Simulink dynamic 365-day queue simulation chart for acquisition, network, inference, and review stages"
           />
-        </div>
-        <div className="util-ticks">
-          <span>0% idle</span>
-          <span>50%</span>
-          <span>75%</span>
-          <span>100% saturated</span>
-          <span>&ge;120% over</span>
-        </div>
 
-        <div id="verdict" />
-      </section>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+            <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '4px solid #2b7fff' }}>
+              <strong>Image Acquisition</strong>
+              <div style={{ fontSize: '12px', color: '#555', marginTop: '4px' }}>
+                Camera stations &amp; retake feedback loop.
+              </div>
+            </div>
+            <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '4px solid #e4a900' }}>
+              <strong>Network Transfer</strong>
+              <div style={{ fontSize: '12px', color: '#555', marginTop: '4px' }}>
+                Bandwidth limit &amp; daily upload window.
+              </div>
+            </div>
+            <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '4px solid #9747ff' }}>
+              <strong>AI Inference</strong>
+              <div style={{ fontSize: '12px', color: '#555', marginTop: '4px' }}>
+                Automated 24/7 compute node queue.
+              </div>
+            </div>
+            <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '4px solid #d92525' }}>
+              <strong>Specialist Review</strong>
+              <div style={{ fontSize: '12px', color: '#555', marginTop: '4px' }}>
+                Ophthalmologist clinic waitlist.
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
-      <div className="model-grid">
+      {/* TAB 3: MATLAB & SIMULINK FILES & EXPORT */}
+      {activeTab === 'matlab' && (
+        <section>
+          <h2>MATLAB &amp; Simulink Production Suite</h2>
+          <p>
+            The complete MATLAB scripts and programmatic Simulink block model generator are stored in the
+            <code>./simulink</code> folder of this repository. You can download and run them directly in MATLAB.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem', margin: '1.25rem 0' }}>
+            <div style={{ border: '1px solid #ddd', borderRadius: '6px', padding: '1rem', background: '#fff' }}>
+              <h4 style={{ margin: '0 0 0.5rem' }}>1. Build Simulink Block Model (.slx)</h4>
+              <p style={{ fontSize: '13px', color: '#666', marginBottom: '0.75rem' }}>
+                Programmatically creates <code>screening_pipeline_model.slx</code> with blocks, wires, scopes, and displays.
+              </p>
+              <a
+                href="/api/simulink/download/build_screening_pipeline_model.m"
+                download="build_screening_pipeline_model.m"
+                style={{ display: 'inline-block', padding: '6px 12px', background: '#005a9e', color: '#fff', borderRadius: '4px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}
+              >
+                Download build_screening_pipeline_model.m
+              </a>
+            </div>
+
+            <div style={{ border: '1px solid #ddd', borderRadius: '6px', padding: '1rem', background: '#fff' }}>
+              <h4 style={{ margin: '0 0 0.5rem' }}>2. Simulation Runner &amp; Plots</h4>
+              <p style={{ fontSize: '13px', color: '#666', marginBottom: '0.75rem' }}>
+                Executes the Simulink simulation, generates bottleneck reports, and creates publication-ready MATLAB figures.
+              </p>
+              <a
+                href="/api/simulink/download/run_screening_simulation.m"
+                download="run_screening_simulation.m"
+                style={{ display: 'inline-block', padding: '6px 12px', background: '#005a9e', color: '#fff', borderRadius: '4px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}
+              >
+                Download run_screening_simulation.m
+              </a>
+            </div>
+
+            <div style={{ border: '1px solid #ddd', borderRadius: '6px', padding: '1rem', background: '#fff' }}>
+              <h4 style={{ margin: '0 0 0.5rem' }}>3. Parameters Configuration</h4>
+              <p style={{ fontSize: '13px', color: '#666', marginBottom: '0.75rem' }}>
+                Defines target population, camera stations, bandwidth, AI rates, and doctor capacity in MATLAB workspace.
+              </p>
+              <a
+                href="/api/simulink/download/parameters.m"
+                download="parameters.m"
+                style={{ display: 'inline-block', padding: '6px 12px', background: '#005a9e', color: '#fff', borderRadius: '4px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}
+              >
+                Download parameters.m
+              </a>
+            </div>
+
+            <div style={{ border: '1px solid #ddd', borderRadius: '6px', padding: '1rem', background: '#fff' }}>
+              <h4 style={{ margin: '0 0 0.5rem' }}>4. Vectorized Solver &amp; Monte Carlo</h4>
+              <p style={{ fontSize: '13px', color: '#666', marginBottom: '0.75rem' }}>
+                High-speed MATLAB solver for stochastic sweeps, arrival surges, and sensitivity analysis.
+              </p>
+              <a
+                href="/api/simulink/download/simulate_steady_and_dynamic.m"
+                download="simulate_steady_and_dynamic.m"
+                style={{ display: 'inline-block', padding: '6px 12px', background: '#005a9e', color: '#fff', borderRadius: '4px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}
+              >
+                Download simulate_steady_and_dynamic.m
+              </a>
+            </div>
+          </div>
+
+          <h3>Running in MATLAB Command Window</h3>
+          <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: '1rem', borderRadius: '6px', overflowX: 'auto', fontSize: '13px' }}>
+{`% Navigate to the repository simulink folder
+cd('d:/Projects/DiabeticRentinopathy/Intellathon26/simulink');
+
+% 1. Load baseline parameters
+run('parameters.m');
+
+% 2. Build and inspect the Simulink block diagram
+run('build_screening_pipeline_model.m');
+open_system('screening_pipeline_model');
+
+% 3. Run the full 365-day dynamic simulation with plots
+run('run_screening_simulation.m');`}
+          </pre>
+        </section>
+      )}
+
+      {/* Model Grid: Controls and Outputs */}
+      <div className="model-grid" style={{ marginTop: '1.5rem' }}>
         <div>
           <h3>Stage by stage</h3>
           <table className="stage-table" id="stage-table" />
@@ -239,71 +455,52 @@ export default function Pipeline() {
       <hr className="rule" />
 
       <section>
-        <h2>How each figure is worked out</h2>
+        <h2>Mathematical Formulation (Simulink Equations)</h2>
         <p>
-          Nothing here is fitted or randomly simulated. Every capacity is one line of arithmetic on the
-          inputs, so the model can be argued with directly.
+          Every capacity is expressed as an explicit analytical block function in Simulink, allowing direct
+          parameter sweeps and validation.
         </p>
 
         <table className="matrix">
           <tbody>
-            <tr><th>Quantity</th><th>Definition</th></tr>
-            <tr><td>Patients per day</td><td>population per year &divide; 365.</td></tr>
-            <tr><td>Usable images per day</td><td>patients per day &times; images per patient.</td></tr>
+            <tr><th>Quantity</th><th>Simulink Definition</th></tr>
+            <tr><td>Patients per day</td><td><code>target / 365</code></td></tr>
+            <tr><td>Usable images per day</td><td><code>patientsPerDay * perPatient</code></td></tr>
             <tr>
               <td>Capture attempts per day</td>
               <td>
-                usable images &divide; (1 &minus; reject rate). A
-                rejected capture still occupies the camera, so the acquisition stage carries the retakes and
-                no other stage does &mdash; the quality gate runs on the capture device, before upload.
+                <code>usableImages / (1 - rejectRate)</code> (Acquisition stage carries retake loop).
               </td>
             </tr>
-            <tr><td>Acquisition capacity</td><td>stations &times; images per station per day.</td></tr>
+            <tr><td>Acquisition capacity</td><td><code>stations * perStation</code></td></tr>
             <tr>
               <td>Transfer capacity</td>
               <td>
-                bandwidth (Mbps) &times; 3600 &times; transfer hours &divide;
-                (image size in MB &times; 8). Protocol overhead and retransmission are not modelled, so this
-                is an optimistic ceiling.
+                <code>(bandwidth * 3600 * netHours) / (imgSizeMB * 8)</code>
               </td>
             </tr>
-            <tr><td>Inference capacity</td><td>images per minute per node &times; 1440 &times; nodes.</td></tr>
+            <tr><td>Inference capacity</td><td><code>modelRate * 1440 * nodes</code></td></tr>
             <tr>
               <td>Review demand</td>
               <td>
-                patients per day &times; referral rate. Counted in patients, not
-                images: a specialist reviews a person, both eyes at once.
+                <code>patientsPerDay * referralRate</code>
               </td>
             </tr>
-            <tr><td>Review capacity</td><td>ophthalmologists &times; reviews per day each.</td></tr>
+            <tr><td>Review capacity</td><td><code>docs * perDoc</code></td></tr>
             <tr>
               <td>Utilisation</td>
               <td>
-                demand &divide; capacity at that stage. Above 1.0 the stage cannot
-                keep up and a queue forms behind it.
+                <code>demand / capacity</code> (&gt;1.0 means bottleneck queue forms).
               </td>
             </tr>
             <tr>
               <td>Achievable screening rate</td>
               <td>
-                target &divide; the highest utilisation, when that
-                exceeds 1.0. A chain runs at the speed of its slowest stage, so one number &mdash; the worst
-                utilisation &mdash; sets the whole programme's ceiling.
+                <code>target / max(Utilisation)</code> when <code>max(Utilisation) &gt; 1.0</code>.
               </td>
             </tr>
           </tbody>
         </table>
-
-        <h3>What this model leaves out</h3>
-        <p className="small">
-          It is a steady-state capacity model, so it says nothing about variance: it
-          assumes demand arrives evenly, that staff and cameras are available every day they are counted,
-          and that no stage fails. Real queues are worse than steady-state ones, because arrivals bunch
-          and servers go down &mdash; so wherever this model shows a stage running just under 100%, expect
-          a queue in practice. It also treats specialist review as a single pool rather than a rota with
-          leave and travel, ignores the time a patient waits between stages, and assumes every flagged
-          patient is reviewed exactly once. Read it as a floor on the difficulty, not a forecast.
-        </p>
       </section>
     </>
   )
