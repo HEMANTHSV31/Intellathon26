@@ -29,7 +29,7 @@ function AppContent() {
       <header
         style={{
           width: '100%',
-          height: '46px',
+          height: '54px',
           background: '#ffffff',
           position: 'sticky',
           top: 0,
@@ -61,7 +61,7 @@ function AppContent() {
           <div
             style={{
               width: '100%',
-              height: 'calc(100vh - 46px)',
+              height: 'calc(100vh - 54px)',
               padding: '0 2.5rem',
               display: 'flex',
               alignItems: 'center',
