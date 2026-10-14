@@ -208,6 +208,255 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
   }
 });
 
+const path = require('path');
+const fs = require('fs');
+const { exec } = require('child_process');
+
+// 5. Simulink & MATLAB Integration Endpoints
+
+// Check if MATLAB is detected on the system
+app.get('/api/simulink/status', (req, res) => {
+  exec('where matlab', (err, stdout) => {
+    const hasMatlab = !err && stdout && stdout.trim().length > 0;
+    const simulinkDir = path.join(__dirname, '..', 'simulink');
+    const filesExist = fs.existsSync(simulinkDir);
+
+    res.json({
+      matlabInstalled: !!hasMatlab,
+      matlabPath: hasMatlab ? stdout.trim().split('\r\n')[0] : null,
+      simulinkFilesReady: filesExist,
+      simulinkDirectory: simulinkDir
+    });
+  });
+});
+
+// List available Simulink & MATLAB model files
+app.get('/api/simulink/files', (req, res) => {
+  try {
+    const simulinkDir = path.join(__dirname, '..', 'simulink');
+    if (!fs.existsSync(simulinkDir)) {
+      return res.json({ files: [] });
+    }
+    const files = fs.readdirSync(simulinkDir).map(file => {
+      const filePath = path.join(simulinkDir, file);
+      const stat = fs.statSync(filePath);
+      return {
+        name: file,
+        sizeBytes: stat.size,
+        modified: stat.mtime
+      };
+    });
+    return res.json({ files });
+  } catch (err) {
+    console.error('List simulink files error:', err);
+    return res.status(500).json({ error: 'Failed to list Simulink files' });
+  }
+});
+
+// Download a Simulink / MATLAB file
+app.get('/api/simulink/download/:filename', (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(__dirname, '..', 'simulink', filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    res.download(filePath, filename);
+  } catch (err) {
+    console.error('Download error:', err);
+    return res.status(500).json({ error: 'File download failed' });
+  }
+});
+
+// High-fidelity Simulink Mathematical Solver with Dynamic 365-Day Queuing
+function solveSimulinkModel(params) {
+  const p = {
+    target: parseFloat(params.target) || 100000,
+    perPatient: Math.max(1, parseFloat(params.perPatient) || 2),
+    stations: parseFloat(params.stations) || 4,
+    perStation: parseFloat(params.perStation) || 90,
+    rejectPct: Math.min(90, Math.max(0, parseFloat(params.rejectPct) || 12)),
+    bandwidth: parseFloat(params.bandwidth) || 10,
+    imgSizeMB: Math.max(0.01, parseFloat(params.imgSizeMB) || 2.0),
+    netHours: Math.min(24, Math.max(0.1, parseFloat(params.netHours) || 12)),
+    modelRate: Math.max(0.01, parseFloat(params.modelRate) || 6.0),
+    nodes: Math.max(1, parseFloat(params.nodes) || 1),
+    referralPct: Math.min(100, Math.max(0, parseFloat(params.referralPct) || 18)),
+    docs: parseFloat(params.docs) || 1,
+    perDoc: parseFloat(params.perDoc) || 60,
+    simDays: parseInt(params.simDays) || 365,
+    stochasticVar: parseFloat(params.stochasticVar) || 0.12
+  };
+
+  const patientsPerDay = p.target / 365;
+  const usableImages = patientsPerDay * p.perPatient;
+  const rejectFrac = p.rejectPct / 100;
+  const captureAttempts = usableImages / (1 - rejectFrac);
+  const referrals = patientsPerDay * (p.referralPct / 100);
+
+  const capAcq = p.stations * p.perStation;
+  const demAcq = captureAttempts;
+  const utilAcq = demAcq / capAcq;
+
+  const capNet = (p.bandwidth * 3600 * p.netHours) / (p.imgSizeMB * 8);
+  const demNet = usableImages;
+  const utilNet = demNet / capNet;
+
+  const capInf = p.modelRate * 1440 * p.nodes;
+  const demInf = usableImages;
+  const utilInf = demInf / capInf;
+
+  const capReview = p.docs * p.perDoc;
+  const demReview = referrals;
+  const utilReview = capReview > 0 ? demReview / capReview : Infinity;
+
+  const stages = [
+    {
+      key: 'acq',
+      name: 'Image Acquisition',
+      sub: 'Fundus Camera Stations',
+      unit: 'images/day',
+      demand: demAcq,
+      capacity: capAcq,
+      util: utilAcq,
+      ceiling: (capAcq * (1 - rejectFrac) / p.perPatient) * 365,
+      relief: 'Add a camera station or reduce image rejection rate to eliminate wasted captures'
+    },
+    {
+      key: 'qc',
+      name: 'Quality Gate',
+      sub: 'On-device edge validation',
+      unit: 'images/day',
+      demand: captureAttempts,
+      capacity: Infinity,
+      util: 0,
+      ceiling: Infinity,
+      relief: 'Runs on capture station before upload; retakes loop back to acquisition'
+    },
+    {
+      key: 'net',
+      name: 'Network Transfer',
+      sub: 'PHC uplink to inference server',
+      unit: 'images/day',
+      demand: demNet,
+      capacity: capNet,
+      util: utilNet,
+      ceiling: (capNet / p.perPatient) * 365,
+      relief: 'Increase uplink bandwidth, optimize image compression, or widen transfer window'
+    },
+    {
+      key: 'inf',
+      name: 'AI Inference',
+      sub: 'MobileNet + Grad-CAM',
+      unit: 'images/day',
+      demand: demInf,
+      capacity: capInf,
+      util: utilInf,
+      ceiling: (capInf / p.perPatient) * 365,
+      relief: 'Spin up an additional GPU/CPU inference node (24/7 automated queue)'
+    },
+    {
+      key: 'triage',
+      name: 'Referral Triage',
+      sub: 'Automated diagnostic split',
+      unit: 'patients/day',
+      demand: patientsPerDay,
+      capacity: Infinity,
+      util: 0,
+      ceiling: Infinity,
+      relief: 'Pure logic gate routing healthy patients to recall and abnormal scans to specialist'
+    },
+    {
+      key: 'review',
+      name: 'Specialist Review',
+      sub: 'Ophthalmologist confirmation',
+      unit: 'patients/day',
+      demand: demReview,
+      capacity: capReview,
+      util: utilReview,
+      ceiling: p.referralPct > 0 ? (capReview / (p.referralPct / 100)) * 365 : Infinity,
+      relief: 'Hire more ophthalmologists or calibrate diagnostic threshold to reduce false-positive flags'
+    }
+  ];
+
+  const binding = stages.filter(s => isFinite(s.capacity));
+  let choke = binding[0];
+  binding.forEach(s => {
+    if (s.util > choke.util) choke = s;
+  });
+
+  const maxUtil = choke.util;
+  const isOverCapacity = maxUtil > 1.0;
+  const achievableTarget = isOverCapacity ? p.target / maxUtil : p.target;
+  const shortfallPerDay = Math.max(0, patientsPerDay - achievableTarget / 365);
+  const twelveMonthBacklog = shortfallPerDay * 365;
+
+  // 365-Day Dynamic Queuing Simulation
+  const days = p.simDays;
+  const timeDays = [];
+  const queueAcq = [];
+  const queueNet = [];
+  const queueInf = [];
+  const queueReview = [];
+
+  let qAcq = 0, qNet = 0, qInf = 0, qReview = 0;
+
+  for (let d = 1; d <= days; d++) {
+    timeDays.push(d);
+    const seasonalFactor = 1 + 0.08 * Math.sin((2 * Math.PI * d) / 30);
+    const dayDemandPatients = patientsPerDay * seasonalFactor;
+    const dayUsableImages = dayDemandPatients * p.perPatient;
+    const dayCaptureAttempts = dayUsableImages / (1 - rejectFrac);
+    const dayReferrals = dayDemandPatients * (p.referralPct / 100);
+
+    qAcq = Math.max(0, qAcq + (dayCaptureAttempts - capAcq));
+    qNet = Math.max(0, qNet + (dayUsableImages - capNet));
+    qInf = Math.max(0, qInf + (dayUsableImages - capInf));
+    qReview = Math.max(0, qReview + (dayReferrals - capReview));
+
+    queueAcq.push(Math.round(qAcq));
+    queueNet.push(Math.round(qNet));
+    queueInf.push(Math.round(qInf));
+    queueReview.push(Math.round(qReview));
+  }
+
+  const order = binding.slice().sort((a, b) => b.util - a.util);
+
+  return {
+    params: p,
+    stages,
+    binding,
+    choke,
+    maxUtil,
+    isOverCapacity,
+    achievableTarget,
+    shortfallPerDay,
+    twelveMonthBacklog,
+    patientsPerDay,
+    usableImages,
+    captureAttempts,
+    referrals,
+    order,
+    dynamicQueues: {
+      timeDays,
+      acq: queueAcq,
+      net: queueNet,
+      inf: queueInf,
+      review: queueReview
+    }
+  };
+}
+
+// Execute Simulink Simulation endpoint
+app.post('/api/simulink/simulate', (req, res) => {
+  try {
+    const results = solveSimulinkModel(req.body || {});
+    return res.json(results);
+  } catch (err) {
+    console.error('Simulink simulation error:', err);
+    return res.status(500).json({ error: 'Failed to run simulation model' });
 // 5. MATLAB Lesion Detection Suite Endpoints
 app.get('/api/matlab/status', (req, res) => {
   const status = checkMatlabAvailability();
@@ -334,9 +583,9 @@ app.get('/api/screenings', optionalAuthenticateToken, async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'DR Screening Auth & MATLAB API' });
+  res.json({ status: 'ok', service: 'DR Screening API with MATLAB/Simulink Integration' });
 });
 
 app.listen(PORT, () => {
-  console.log(`Auth and MATLAB server running on http://127.0.0.1:${PORT}`);
+  console.log(`Auth & Simulink server running on http://127.0.0.1:${PORT}`);
 });
