@@ -166,6 +166,28 @@ export function AuthProvider({ children }) {
     return res.json()
   }
 
+  const patientLogin = async (query) => {
+    const cleanQuery = (query || '').trim().toLowerCase()
+    const res = await fetch('/api/auth/patient-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: cleanQuery })
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error || 'No patient record found in database')
+    }
+
+    setToken(data.token)
+    setUser(data.user)
+    localStorage.setItem('dr_token', data.token)
+    localStorage.setItem('dr_user', JSON.stringify(data.user))
+
+    await saveOfflineAuthSession(data.user, data.token)
+    return data
+  }
+
   const logout = async () => {
     setToken(null)
     setUser(null)
@@ -185,6 +207,7 @@ export function AuthProvider({ children }) {
         isOffline,
         login,
         signup,
+        patientLogin,
         switchRole,
         checkEmail,
         logout

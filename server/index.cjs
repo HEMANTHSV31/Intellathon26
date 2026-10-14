@@ -215,9 +215,108 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// 3b. Patient Direct Login via single text field (Name + Phone digits)
+app.post('/api/auth/patient-login', async (req, res) => {
+  try {
+    const rawInput = (req.body.query || req.body.identifier || '').trim().toLowerCase();
+    if (!rawInput) {
+      return res.status(400).json({ error: 'Please enter your patient name and phone number.' });
+    }
+
+    // Extract phone digits
+    const phoneDigits = rawInput.replace(/\D/g, '');
+    // Extract alphabetic characters
+    const lettersOnly = rawInput.replace(/[^a-z]/g, '');
+
+    // Potential patient ID derived from input
+    const candidateId = phoneDigits ? `${lettersOnly}_${phoneDigits}` : lettersOnly;
+
+    // Search patients table case-insensitively
+    const patientQuery = `
+      SELECT p.id, p.name, p.phone, p.created_at, p.updated_at
+      FROM patients p
+      WHERE LOWER(p.id) = $1
+         OR LOWER(p.id) = $2
+         OR (p.phone = $3 AND LOWER(REPLACE(p.name, ' ', '')) LIKE '%' || $4 || '%')
+         OR (p.phone = $3 AND $4 LIKE '%' || LOWER(REPLACE(p.name, ' ', '')) || '%')
+         OR (p.phone = $3)
+         OR LOWER(p.id) LIKE '%' || $3 || '%'
+      LIMIT 1;
+    `;
+
+    const result = await query(patientQuery, [
+      rawInput,
+      candidateId,
+      phoneDigits || 'NOMATCH',
+      lettersOnly || 'NOMATCH'
+    ]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: 'No patient screening records found in Supabase for this name and phone number. Please verify with your clinic operator.'
+      });
+    }
+
+    const patient = result.rows[0];
+    const patientId = patient.id.toLowerCase();
+
+    // Sign patient session JWT
+    const token = jwt.sign(
+      {
+        id: patient.id,
+        patientId,
+        fullName: patient.name,
+        role: 'patient',
+        phone: patient.phone
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Patient record verified successfully',
+      user: {
+        id: patient.id,
+        patientId,
+        fullName: patient.name,
+        email: `${patientId}@patient.portal`,
+        role: 'patient',
+        phone: patient.phone
+      },
+      token
+    });
+  } catch (err) {
+    console.error('Patient login error:', err);
+    return res.status(500).json({ error: 'Patient authentication failed: ' + (err.message || err) });
+  }
+});
+
 // 4. Current user session verification
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
+    if (req.user?.role === 'patient') {
+      const pResult = await query(
+        'SELECT id, name, phone, created_at, updated_at FROM patients WHERE LOWER(id) = LOWER($1)',
+        [req.user.patientId || req.user.id]
+      );
+      if (pResult.rows.length > 0) {
+        const p = pResult.rows[0];
+        return res.json({
+          user: {
+            id: p.id,
+            patientId: p.id.toLowerCase(),
+            fullName: p.name,
+            email: `${p.id.toLowerCase()}@patient.portal`,
+            role: 'patient',
+            phone: p.phone,
+            createdAt: p.created_at,
+            updatedAt: p.updated_at
+          }
+        });
+      }
+    }
+
     const result = await query(
       'SELECT id, email, full_name, role, phone, created_at, last_login FROM users WHERE id = $1',
       [req.user.id]
@@ -244,6 +343,35 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
     return res.status(500).json({ error: 'Verification failed' });
   }
 });
+
+// 4b. Live System & Clinic Stats (Admin & Telemetry)
+app.get('/api/stats', async (req, res) => {
+  try {
+    const pResult = await query('SELECT COUNT(*)::int as count FROM patients');
+    const sResult = await query(`
+      SELECT COUNT(*)::int as total,
+             COUNT(CASE WHEN quality_verdict != 'reject' THEN 1 END)::int as passed,
+             COUNT(CASE WHEN quality_verdict = 'reject' THEN 1 END)::int as rejected,
+             COUNT(CASE WHEN referable = true THEN 1 END)::int as referable
+      FROM uploaded_screenings
+    `);
+    const uResult = await query('SELECT COUNT(*)::int as count FROM users');
+
+    return res.json({
+      patientsCount: pResult.rows[0]?.count || 0,
+      totalScreenings: sResult.rows[0]?.total || 0,
+      passedQualityCount: sResult.rows[0]?.passed || 0,
+      rejectedQualityCount: sResult.rows[0]?.rejected || 0,
+      referableCount: sResult.rows[0]?.referable || 0,
+      usersCount: uResult.rows[0]?.count || 0,
+      databaseStatus: 'connected'
+    });
+  } catch (err) {
+    console.error('Fetch stats error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve stats' });
+  }
+});
+
 // 5. MATLAB Lesion Detection Suite Endpoints
 app.get('/api/matlab/status', (req, res) => {
   const status = checkMatlabAvailability();
@@ -276,7 +404,7 @@ app.post('/api/matlab/detect-lesions', async (req, res) => {
   }
 });
 
-// 6. Patient Intake Endpoint (Generates Patient Name + Phone Digits ID)
+// 6. Patient Intake Endpoint (Strictly Lowercases Patient Name + Phone Digits ID)
 app.post('/api/patients/intake', optionalAuthenticateToken, async (req, res) => {
   try {
     const { name, phone } = req.body;
@@ -284,14 +412,15 @@ app.post('/api/patients/intake', optionalAuthenticateToken, async (req, res) => 
       return res.status(400).json({ error: 'Patient name and phone number are required.' });
     }
 
-    const cleanName = name.trim().replace(/[^a-zA-Z0-9]/g, '');
+    // Force all patient identifiers to lowercase
+    const cleanName = name.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     const cleanPhone = phone.trim().replace(/\D/g, '');
 
     if (!cleanPhone) {
-      return res.status(400).json({ error: 'Phone number must contain at least some digits.' });
+      return res.status(400).json({ error: 'Phone number must contain numeric digits.' });
     }
 
-    const patientId = `${cleanName || 'Patient'}_${cleanPhone}`;
+    const patientId = `${cleanName || 'patient'}_${cleanPhone}`.toLowerCase();
     const operatorId = req.user ? req.user.id : null;
 
     const upsertPatientQuery = `
@@ -318,16 +447,18 @@ app.post('/api/patients/intake', optionalAuthenticateToken, async (req, res) => 
   }
 });
 
-// 7. Get Patients List
+// 7. Get Patients List with Accurate Quality Passed & Rejected Counts
 app.get('/api/patients', optionalAuthenticateToken, async (req, res) => {
   try {
     const result = await query(`
       SELECT p.id, p.name, p.phone, p.created_at, p.updated_at,
-             COUNT(s.id)::int as image_count,
+             COUNT(s.id)::int as total_image_count,
+             COUNT(CASE WHEN s.quality_verdict != 'reject' THEN 1 END)::int as quality_passed_count,
+             COUNT(CASE WHEN s.quality_verdict = 'reject' THEN 1 END)::int as quality_rejected_count,
              MAX(s.created_at) as latest_screening_date,
              BOOL_OR(COALESCE(s.referable, false)) as referable_flag
       FROM patients p
-      LEFT JOIN uploaded_screenings s ON p.id = s.patient_id
+      LEFT JOIN uploaded_screenings s ON LOWER(p.id) = LOWER(s.patient_id)
       GROUP BY p.id, p.name, p.phone, p.created_at, p.updated_at
       ORDER BY p.updated_at DESC
       LIMIT 100
@@ -370,12 +501,12 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
     const operatorId = req.user?.role === 'operator' ? req.user.id : (userId || null);
     const createdAt = timestamp ? new Date(timestamp) : new Date();
 
-    // If patient metadata is provided, ensure patient record is in Supabase
-    let finalPatientId = patientId || null;
+    // Ensure patient ID is lowercased
+    let finalPatientId = patientId ? patientId.toLowerCase() : null;
     if (patientName && patientPhone) {
-      const cleanName = patientName.trim().replace(/[^a-zA-Z0-9]/g, '');
+      const cleanName = patientName.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
       const cleanPhone = patientPhone.trim().replace(/\D/g, '');
-      finalPatientId = finalPatientId || `${cleanName || 'Patient'}_${cleanPhone}`;
+      finalPatientId = finalPatientId || `${cleanName || 'patient'}_${cleanPhone}`.toLowerCase();
 
       try {
         await query(`
@@ -451,21 +582,21 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
   }
 });
 
-// 9. List uploaded screenings
+// 9. List uploaded screenings with lowercase filtering and image thumbnail
 app.get('/api/screenings', optionalAuthenticateToken, async (req, res) => {
   try {
     const { patientId } = req.query;
     let sql = `
       SELECT id, user_id, patient_id, patient_name, patient_phone, eye, operator_id,
-             file_name, prediction, confidence, dr_score,
+             file_name, image_data, prediction, confidence, dr_score,
              icdr_grade, referable, quality_verdict, quality_reason,
              recommendations, lesion_counts, created_at, synced_at
       FROM uploaded_screenings
     `;
     const params = [];
     if (patientId) {
-      sql += ' WHERE patient_id = $1';
-      params.push(patientId);
+      sql += ' WHERE LOWER(patient_id) = LOWER($1)';
+      params.push(patientId.trim().toLowerCase());
     }
     sql += ' ORDER BY created_at DESC LIMIT 100';
 
