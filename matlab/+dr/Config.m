@@ -64,18 +64,18 @@ C.cam.featherFrac    = 0.7;
 % Deviation thresholds, as multiples of the image's own robust noise scale plus
 % an absolute floor. Both are needed: the multiple adapts to the camera, the
 % floor stops a very clean image from dropping its threshold into the texture.
-C.lesion.darkK   = 3.5;
-C.lesion.brightK = 3.2;             % tuned for improved CWS sensitivity
-C.lesion.darkFloor   = 10;
-C.lesion.brightFloor = 8;           % captures subtle soft cotton wool spots
-C.lesion.darkContrastFloor   = 9;
-C.lesion.brightContrastFloor = 7.5; % accommodates perimacular dark background transitions
-C.lesion.minContrastK = 2.8;
+C.lesion.darkK   = 2.2;
+C.lesion.brightK = 2.2;             % high sensitivity for faint lesions and CWS
+C.lesion.darkFloor   = 4.0;
+C.lesion.brightFloor = 4.0;         % captures subtle microaneurysms and soft CWS
+C.lesion.darkContrastFloor   = 4.0;
+C.lesion.brightContrastFloor = 4.0;
+C.lesion.minContrastK = 1.6;
 
-C.lesion.cwsMinAreaFrac = 0.00008;  % increased sensitivity for localized perimacular CWS (~50 px)
-C.lesion.edgeZoneFrac      = 0.80;  % beyond this fraction of the aperture radius
-C.lesion.edgeArtifactAreaFrac = 0.0015;  % a region this large is a rim artifact
-C.lesion.hystRatio = 0.45;          % permissive threshold, as a fraction of strict
+C.lesion.cwsMinAreaFrac = 0.00005;  % captures small/early cotton wool spots
+C.lesion.edgeZoneFrac      = 0.85;  % beyond this fraction of the aperture radius
+C.lesion.edgeArtifactAreaFrac = 0.0020;
+C.lesion.hystRatio = 0.40;          % permissive threshold for cluster recovery
 
 % Vessel map. A vessel is told from a lesion by the *spread* of the directional
 % closing across orientations, not by the size of any one response: at a vessel
@@ -84,16 +84,16 @@ C.lesion.hystRatio = 0.45;          % permissive threshold, as a fraction of str
 C.lesion.vesselElongation = 1.5;
 C.lesion.vesselSeedQ = 0.95;
 C.lesion.vesselGrowQ = 0.80;
-C.lesion.vesselOverlapReject = 0.78;
+C.lesion.vesselOverlapReject = 0.82;
 
 % Linear structuring element, as a fraction of the short edge. Too short and
 % thin vessels are filled and read as lesions; too long and short vessel
 % segments start to read as lesions.
 C.lesion.linearSEFrac = 0.014;
 C.lesion.linearOrientations = 12;
-C.lesion.seedTailQ = 0.97;
-C.lesion.seedFloorDark = 6;
-C.lesion.seedFloorBright = 5.5;
+C.lesion.seedTailQ = 0.91;          % lower quantile so true lesions easily seed
+C.lesion.seedFloorDark = 4.0;
+C.lesion.seedFloorBright = 4.0;
 
 % Scale saturation. A bounded blob is already filled at the element matching its
 % own width, so the next element up adds nothing; anything that continues past
@@ -102,7 +102,7 @@ C.lesion.seedFloorBright = 5.5;
 C.lesion.saturationSEMult = 2.0;
 C.lesion.saturationLadder = 3;      % seL, 2*seL, 4*seL
 C.lesion.saturationOrientations = 6;
-C.lesion.saturationMaxGrowth = 1.12;
+C.lesion.saturationMaxGrowth = 1.25;
 
 % Vessel junction test. Where two vessels cross, where one branches and at the
 % apex of a tight bend there is no direction in which the structure is straight,

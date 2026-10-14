@@ -59,22 +59,22 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // so they follow each image rather than assuming one camera. Lowering DARK_K
   // finds fainter lesions and more noise; MIN_CONTRAST_K is the backstop that
   // keeps that trade from turning into speckle.
-  const DARK_K = 3.5;
-  const BRIGHT_K = 3.2;
-  let MIN_CONTRAST_K = 2.8;
+  const DARK_K = 2.2;
+  const BRIGHT_K = 2.2;
+  let MIN_CONTRAST_K = 1.6;
   // Absolute floors in grey levels. Without these the detector collapses on a
   // smooth image: a low noise estimate drives the adaptive threshold down to a
   // few grey levels, and normal choroidal texture then reads as lesions. A real
   // microaneurysm sits well below its background and a real exudate well above,
   // so nothing genuine is lost by refusing to look below these.
-  const DARK_FLOOR = 10;
-  const BRIGHT_FLOOR = 8;
-  const DARK_CONTRAST_FLOOR = 9;
-  const BRIGHT_CONTRAST_FLOOR = 7.5;
+  const DARK_FLOOR = 4.0;
+  const BRIGHT_FLOOR = 4.0;
+  const DARK_CONTRAST_FLOOR = 4.0;
+  const BRIGHT_CONTRAST_FLOOR = 4.0;
   // Cotton wool spots are a quarter to a half disc diameter across. Anything
   // small and soft-edged is far more likely to be defocus or an artefact, so
   // the class carries a size requirement rather than accepting every soft blob.
-  const CWS_MIN_AREA_FRAC = 0.00008;
+  const CWS_MIN_AREA_FRAC = 0.00005;
   // Anything sizeable this far out from the centre of the aperture is an imaging
   // artifact, not a lesion: shadows from pupil misalignment, peripapillary
   // crescents and lens flare all live at the edge of the field and can be large.
@@ -141,11 +141,11 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // behaved like an on/off switch: it was the only thing connected to anything.
   // An upper quantile sits in the tail where the signal actually is, so the
   // threshold now tracks the camera, the exposure and the enhancement.
-  const SEED_TAIL_Q = 0.97;
+  const SEED_TAIL_Q = 0.91;
   // Backstops in grey levels, for an image whose tail estimate collapses — a
   // near-uniform frame, or one where the retina barely fills the aperture.
-  let SEED_FLOOR_DARK = 8;
-  let SEED_FLOOR_BRIGHT = 10;
+  let SEED_FLOOR_DARK = 4.0;
+  let SEED_FLOOR_BRIGHT = 4.0;
   // ---- Scale saturation, the test that separates lesions from vessel geometry.
   //
   // Amplitude cannot do it. Measured over the retina, the top-hat response of a
@@ -213,7 +213,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // loosening the cut from 1.05 to 1.10 recovers three lesions per three retinas
   // for one extra false mark; past 1.15 the false marks climb without buying any
   // further recall.
-  let SATURATION_MAX_GROWTH = 1.12;
+  let SATURATION_MAX_GROWTH = 1.25;
   // A region is only discarded as vessel when this much of it lies on the vessel
   // map. Set too low, lesions touching a vessel are lost with it.
   const VESSEL_OVERLAP_REJECT = 0.78;
@@ -2172,7 +2172,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // can see which marks sit on the vasculature. The factor is deliberately
   // modest: enough to drop a wide spot in a vein that is only as dark as the
   // vein, not enough to drop a focal lesion on one.
-  const ON_VESSEL_CONTRAST_FACTOR = 1.35;
+  const ON_VESSEL_CONTRAST_FACTOR = 1.15;
   // A candidate with vessel persisting outward in this much of every direction
   // is inside the vascular tree, not a discrete lesion within it. Because the
   // measure is now persistence rather than mere presence, a lesion's collar
@@ -2493,7 +2493,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const sharpEdgeThresh = meanGrad*1.5;
 
     const maxArea = Math.round(n*0.030);
-    const minArea = Math.max(6, Math.round(n*0.000012));
+    const minArea = Math.max(3, Math.round(n*0.000004));
     const maMaxArea = Math.max(minArea+1, Math.round(n*0.00018));
     const cwsMinArea = Math.round(n*CWS_MIN_AREA_FRAC);
 
