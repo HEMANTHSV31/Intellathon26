@@ -90,12 +90,12 @@ export default function Reference() {
         boundary, or when the classifier and the lesion detector disagree with each other.</p>
 
         <h3>6. Throughput planning</h3>
-        <p>A deliberately simple capacity model, not part of the AI at all. It takes acquisition rate,
-        bandwidth, measured model speed and reviewer capacity, and reports which stage is the bottleneck.
-        A production version of this would be a Simulink model. The full version lives on the{' '}
-        <Link to="/pipeline">capacity model</Link> page: a Simulink-style block diagram of the whole
-        service, coloured by how hard each stage is being pushed, which names the single stage choking
-        the programme and what becomes the limit once it is relieved.</p>
+        <p>A clinical capacity model implemented with <strong>Simulink and MATLAB</strong> systems engineering.
+        It takes acquisition rate, retake feedback, link bandwidth, measured AI inference speed, and
+        ophthalmologist capacity, evaluating continuous backlog accumulation and identifying the primary choke point.
+        The full version lives on the <Link to="/pipeline">capacity model</Link> page, with interactive
+        Simulink signal flow, 365-day dynamic integrator queue simulations, and complete downloadable MATLAB/Simulink
+        model files (<code>screening_pipeline_model.slx</code>).</p>
 
         <hr className="rule-light" />
         <h3>What the lesion detector cannot do</h3>

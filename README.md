@@ -16,7 +16,26 @@ This branch integrates the **MATLAB Image Processing & Morphology Suite** into t
   - **MATLAB CLI (`matlab/detectLesionsCli.m`)**: Headless batch execution interface for automated screening workflows (`matlab -batch "detectLesionsCli('input.jpg', 'output.json')"`).
   - **Node.js MATLAB Bridge (`server/matlabBridge.cjs`)**: Backend API service exposing `/api/matlab/status` and `/api/matlab/detect-lesions` with automatic detection of host MATLAB/Octave runtimes and fallback to the high-accuracy morphology implementation.
 - **Backend / Authentication**: Node.js, Express, PostgreSQL (Supabase), bcryptjs (salted password hashing), JSON Web Tokens (JWT) for secure session persistence.
-- **Capacity Planning**: Simulink-style interactive service capacity block model running client-side.
+- **Capacity Planning**: MATLAB & Simulink clinical throughput block diagram, 365-day dynamic integrator queuing simulation, and programmatic `.slx` model generator (located in `simulink/`).
+
+## MATLAB & Simulink Model
+
+The repository provides a complete systems-engineering capacity and queuing model for MATLAB / Simulink in the `simulink/` directory:
+
+- `simulink/parameters.m`: Workspace parameters configuration.
+- `simulink/build_screening_pipeline_model.m`: Programmatically creates `screening_pipeline_model.slx` in Simulink with scopes, displays, and wiring.
+- `simulink/run_screening_simulation.m`: Runs the dynamic simulation, identifies the primary choke point, and renders publication-ready MATLAB figures.
+- `simulink/simulate_steady_and_dynamic.m`: Vectorized MATLAB solver for dynamic continuous integrators ($\dot{Q}(t) = \max(0, \lambda(t) - \mu(t))$) with arrival variance.
+- `simulink/export_simulation_json.m`: Exports simulation data to JSON for web consumption.
+
+### Running in MATLAB:
+```matlab
+cd('simulink');
+run('parameters.m');
+run('build_screening_pipeline_model.m');
+sim('screening_pipeline_model');
+run('run_screening_simulation.m');
+```
 
 ---
 

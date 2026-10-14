@@ -535,11 +535,117 @@ export function renderBacklog(m) {
     "Queue behind " + m.choke.name + ", in patients not yet screened"));
 }
 
+export function solveDynamicSimulink(v) {
+  const days = 365;
+  const patientsPerDay = v.target / 365;
+  const usableImages = patientsPerDay * v.perPatient;
+  const rejectFrac = v.rejectPct / 100;
+
+  const capAcq = v.stations * v.perStation;
+  const capNet = (v.bandwidth * 3600 * v.netHours) / (v.imgSizeMB * 8);
+  const capInf = v.modelRate * 1440 * v.nodes;
+  const capReview = v.docs * v.perDoc;
+
+  let qAcq = 0, qNet = 0, qInf = 0, qReview = 0;
+  const timeDays = [];
+  const acq = [];
+  const net = [];
+  const inf = [];
+  const review = [];
+
+  for (let d = 1; d <= days; d++) {
+    timeDays.push(d);
+    // Continuous integrator simulation with arrival variance and periodic seasonality
+    const seasonalFactor = 1 + 0.10 * Math.sin((2 * Math.PI * d) / 30);
+    const dayPatients = patientsPerDay * seasonalFactor;
+    const dayUsable = dayPatients * v.perPatient;
+    const dayAttempts = dayUsable / (1 - rejectFrac);
+    const dayReferrals = dayPatients * (v.referralPct / 100);
+
+    qAcq = Math.max(0, qAcq + (dayAttempts - capAcq));
+    qNet = Math.max(0, qNet + (dayUsable - capNet));
+    qInf = Math.max(0, qInf + (dayUsable - capInf));
+    qReview = Math.max(0, qReview + (dayReferrals - capReview));
+
+    acq.push(Math.round(qAcq));
+    net.push(Math.round(qNet));
+    inf.push(Math.round(qInf));
+    review.push(Math.round(qReview));
+  }
+
+  return { days, timeDays, acq, net, inf, review };
+}
+
+export function renderDynamicQueues(svgId, dyn) {
+  const svg = $(svgId || "dynamic-queues-chart");
+  if (!svg) return;
+  Array.prototype.slice.call(svg.childNodes).forEach(n => {
+    if (n.nodeName !== "title" && n.nodeName !== "desc") svg.removeChild(n);
+  });
+
+  const W = 1120, H = 280, padL = 74, padR = 20, padT = 24, padB = 40;
+  const days = dyn.days;
+  const peak = Math.max(
+    Math.max.apply(null, dyn.acq),
+    Math.max.apply(null, dyn.net),
+    Math.max.apply(null, dyn.inf),
+    Math.max.apply(null, dyn.review),
+    10
+  );
+
+  const x = d => padL + (W - padL - padR) * ((d - 1) / (days - 1));
+  const y = v => (H - padB) - (H - padT - padB) * (peak > 0 ? v / peak : 0);
+
+  const g = el("g", {});
+  svg.appendChild(g);
+
+  // Grid lines
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const v = peak * t / ticks;
+    g.appendChild(el("line", { x1: padL, x2: W - padR, y1: y(v), y2: y(v), class: t === 0 ? "zero" : "axis" }));
+    g.appendChild(el("text", { x: padL - 8, y: y(v) + 3.5, "text-anchor": "end" }, fmt(v)));
+  }
+
+  for (let m = 0; m <= 12; m += 2) {
+    const d = Math.min(days, Math.max(1, Math.round(m * 30.4)));
+    g.appendChild(el("text", { x: x(d), y: H - padB + 16, "text-anchor": "middle" }, "Month " + m));
+  }
+
+  // Stage curves
+  const curves = [
+    { key: 'acq', name: 'Acquisition Queue', data: dyn.acq, color: '#2b7fff' },
+    { key: 'net', name: 'Network Queue', data: dyn.net, color: '#e4a900' },
+    { key: 'inf', name: 'AI Inference Queue', data: dyn.inf, color: '#9747ff' },
+    { key: 'review', name: 'Specialist Waitlist', data: dyn.review, color: '#d92525' }
+  ];
+
+  curves.forEach(c => {
+    let d = "M" + x(1) + " " + y(c.data[0]);
+    for (let i = 1; i < days; i++) {
+      d += " L" + x(i + 1) + " " + y(c.data[i]);
+    }
+    g.appendChild(el("path", { d, fill: "none", stroke: c.color, "stroke-width": 2 }));
+  });
+
+  // Legend
+  let legX = padL + 10;
+  curves.forEach(c => {
+    g.appendChild(el("rect", { x: legX, y: padT - 14, width: 12, height: 12, fill: c.color, rx: 2 }));
+    g.appendChild(el("text", { x: legX + 16, y: padT - 4, "font-size": "11px", fill: "#333", "font-weight": "600" }, c.name));
+    legX += 175;
+  });
+}
+
 export function updatePipeline() {
-  const m = solve(readInputs());
+  const inputs = readInputs();
+  const m = solve(inputs);
   renderFlow(m);
   renderVerdict(m);
   renderTable(m);
   renderRelief(m);
   renderBacklog(m);
+
+  const dyn = solveDynamicSimulink(inputs);
+  renderDynamicQueues("dynamic-queues-chart", dyn);
 }

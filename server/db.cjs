@@ -4,6 +4,9 @@ if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder('verbatim');
 }
 const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
