@@ -1,6 +1,6 @@
 // DR Screening Engine
 "use strict";
-import { saveOfflineScreening } from './offlineDb';
+import { saveOfflineScreening, saveUploadedImageToQueue } from './offlineDb';
 
 let tf = typeof window !== "undefined" ? window.tf : null;
 
@@ -3341,6 +3341,28 @@ let tf = typeof window !== "undefined" ? window.tf : null;
           "This image could not be assessed at all, so nothing here rules anything out.",
           ["the image failed the quality check: " + (verdict.reason || "quality too low to analyse"),
            "recapture if you can, and refer if a usable image cannot be obtained"]);
+        
+        try {
+          await saveUploadedImageToQueue({
+            fileName: file.name || "Fundus Image (Rejected)",
+            fileSize: file.size || 0,
+            fileType: file.type || "image/jpeg",
+            imageData: working.toDataURL("image/jpeg", 0.85),
+            timestamp: Date.now(),
+            qualityVerdict: "reject",
+            qualityReason: verdict.reason || "Image quality too low to analyze",
+            drPrediction: "Rejected - Inadequate Quality",
+            drConfidence: 0,
+            drScore: 0,
+            referable: true,
+            icdrGrade: "Unassessable",
+            recommendations: ["Recapture if possible; refer if usable image cannot be obtained."],
+            lesionCounts: {}
+          });
+        } catch (err) {
+          console.warn("Could not enqueue rejected image in IndexedDB:", err);
+        }
+
         $("#run-button").disabled = false;
         return; // do not proceed to inference
       }
@@ -3449,7 +3471,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       try {
         const fileInput = document.getElementById("file-input");
         const fileName = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0].name : "Fundus Capture";
-        await saveOfflineScreening({
+        const screeningRecord = {
           fileName,
           timestamp: Date.now(),
           qualityVerdict: state.lastQuality?.verdict || "usable",
@@ -3461,9 +3483,19 @@ let tf = typeof window !== "undefined" ? window.tf : null;
           icdrGrade: state.lastSeverity?.gradeText || "ICDR Staged",
           recommendations: state.lastSeverity?.reasons || [],
           lesionCounts: state.lastLesions?.counts || {}
+        };
+
+        await saveOfflineScreening(screeningRecord);
+
+        // Store uploaded image in IndexedDB until server confirms receipt
+        await saveUploadedImageToQueue({
+          ...screeningRecord,
+          fileSize: file.size || 0,
+          fileType: file.type || "image/jpeg",
+          imageData: working.toDataURL("image/jpeg", 0.88)
         });
       } catch (saveRecErr) {
-        console.warn("Could not persist screening report to IndexedDB:", saveRecErr);
+        console.warn("Could not persist screening report or image to IndexedDB:", saveRecErr);
       }
 
     } catch(err){

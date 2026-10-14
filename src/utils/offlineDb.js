@@ -11,12 +11,13 @@
  */
 
 const DB_NAME = 'dr_rural_offline_db'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 const STORES = {
   REQUESTS: 'requests_cache',
   AUTH: 'auth_cache',
   SCREENINGS: 'screenings_cache',
+  PENDING_UPLOADS: 'pending_uploads',
   APP_META: 'app_meta'
 }
 
@@ -57,7 +58,13 @@ export function getDb() {
         scStore.createIndex('verdict', 'verdict', { unique: false })
       }
 
-      // Store 4: App & Model Metadata
+      // Store 4: Uploaded images waiting to be synced to server
+      if (!db.objectStoreNames.contains(STORES.PENDING_UPLOADS)) {
+        const upStore = db.createObjectStore(STORES.PENDING_UPLOADS, { keyPath: 'id' })
+        upStore.createIndex('timestamp', 'timestamp', { unique: false })
+      }
+
+      // Store 5: App & Model Metadata
       if (!db.objectStoreNames.contains(STORES.APP_META)) {
         db.createObjectStore(STORES.APP_META, { keyPath: 'key' })
       }
@@ -413,3 +420,172 @@ export async function getRuralCacheStats() {
     }
   }
 }
+
+/**
+ * Store an uploaded image and its diagnosis in IndexedDB pending upload to the server.
+ * If server is unreachable or client is offline, it remains in IndexedDB.
+ */
+export async function saveUploadedImageToQueue(record) {
+  try {
+    const db = await getDb()
+    const entry = {
+      id: record.id || `upload_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      fileName: record.fileName || 'Fundus Image',
+      imageData: record.imageData, // base64 dataURL
+      fileSize: record.fileSize || 0,
+      fileType: record.fileType || 'image/jpeg',
+      timestamp: record.timestamp || Date.now(),
+      qualityVerdict: record.qualityVerdict || 'usable',
+      qualityReason: record.qualityReason || '',
+      drPrediction: record.drPrediction || 'Screening Completed',
+      drConfidence: record.drConfidence || 0,
+      drScore: record.drScore || 0,
+      referable: !!record.referable,
+      icdrGrade: record.icdrGrade || 'Not graded',
+      recommendations: record.recommendations || [],
+      lesionCounts: record.lesionCounts || {},
+      status: 'pending'
+    }
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORES.PENDING_UPLOADS, 'readwrite')
+      const store = tx.objectStore(STORES.PENDING_UPLOADS)
+      const req = store.put(entry)
+      req.onsuccess = () => resolve(entry)
+      req.onerror = () => reject(req.error)
+    })
+
+    console.log(`[IndexedDB Queue] Stored uploaded image "${entry.fileName}" (${entry.id}) in IndexedDB pending server upload.`)
+
+    // Attempt immediate sync to server if online
+    syncPendingImagesToServer().catch((err) => {
+      console.log('[Sync Engine] Initial upload attempt deferred (offline/unreachable):', err.message || err)
+    })
+
+    return entry
+  } catch (err) {
+    console.warn('saveUploadedImageToQueue error:', err)
+    return null
+  }
+}
+
+/**
+ * Get all pending images awaiting upload to the server
+ */
+export async function getPendingUploadedImages() {
+  try {
+    const db = await getDb()
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORES.PENDING_UPLOADS, 'readonly')
+      const store = tx.objectStore(STORES.PENDING_UPLOADS)
+      const req = store.getAll()
+      req.onsuccess = () => {
+        const results = (req.result || []).sort((a, b) => a.timestamp - b.timestamp)
+        resolve(results)
+      }
+      req.onerror = () => resolve([])
+    })
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Delete an uploaded image from IndexedDB queue after successful server storage
+ */
+export async function deleteUploadedImageFromQueue(id) {
+  try {
+    const db = await getDb()
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORES.PENDING_UPLOADS, 'readwrite')
+      const store = tx.objectStore(STORES.PENDING_UPLOADS)
+      const req = store.delete(id)
+      req.onsuccess = () => {
+        console.log(`[IndexedDB Queue] Deleted uploaded image (${id}) from IndexedDB after server confirmed storage.`)
+        resolve(true)
+      }
+      req.onerror = () => resolve(false)
+    })
+  } catch {
+    return false
+  }
+}
+
+let isSyncingImages = false
+
+/**
+ * Synchronize all pending images from IndexedDB to the server.
+ * Once stored on the server, each image is permanently deleted from IndexedDB.
+ */
+export async function syncPendingImagesToServer() {
+  if (isSyncingImages) return
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    console.log('[Sync Engine] Network is offline. Keeping uploaded images in IndexedDB.')
+    return
+  }
+
+  try {
+    isSyncingImages = true
+    const pending = await getPendingUploadedImages()
+    if (!pending || pending.length === 0) {
+      isSyncingImages = false
+      return
+    }
+
+    console.log(`[Sync Engine] Found ${pending.length} pending uploaded image(s) in IndexedDB. Synchronizing to server...`)
+
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('dr_token') : null
+    const headers = {
+      'Content-Type': 'application/json'
+    }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    for (const item of pending) {
+      try {
+        const res = await fetch('/api/screenings/upload', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(item)
+        })
+
+        if (res.ok) {
+          // Success! Delete image from IndexedDB
+          await deleteUploadedImageFromQueue(item.id)
+          console.log(`[Sync Engine] Successfully stored image "${item.fileName}" on server. Deleted from IndexedDB!`)
+        } else {
+          console.warn(`[Sync Engine] Server returned ${res.status} for ${item.id}. Retaining in IndexedDB.`)
+          // Stop further uploads until next cycle
+          break
+        }
+      } catch (uploadErr) {
+        console.log(`[Sync Engine] Network disconnected or server unreachable while uploading ${item.id}. Retaining in IndexedDB:`, uploadErr.message || uploadErr)
+        break
+      }
+    }
+  } catch (err) {
+    console.warn('[Sync Engine] Error during image sync:', err)
+  } finally {
+    isSyncingImages = false
+  }
+}
+
+// Automatically sync when network regains
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[Sync Engine] Network regained! Initiating auto-sync of IndexedDB queued images to server...')
+    syncPendingImagesToServer()
+  })
+
+  // Periodic background sync check (every 25 seconds)
+  setInterval(() => {
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      syncPendingImagesToServer()
+    }
+  }, 25000)
+
+  // Initial check shortly after boot
+  setTimeout(() => {
+    syncPendingImagesToServer()
+  }, 3000)
+}
+
