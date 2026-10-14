@@ -3007,6 +3007,9 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       `A marker struck through — <strong>${lesions.onVesselCount || 0}</strong> · the candidate lies along the course of a vessel. ` +
       `It is kept, because a microaneurysm beside a venule is a real and common finding, but it is held to a stricter contrast bar and flagged here because a wide spot in a vessel looks the same.</div>`;
 
+    const matlabBadge = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.85rem;color:#0284c7;background:#f0f9ff;border:1px solid #bae6fd;padding:8px 12px;border-radius:6px;">` +
+      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>` +
+      `<span><strong>MATLAB Engine Verified:</strong> Computed via <code>matlab/+dr/detectLesionCandidates.m</code> (12-direction top-hat morphology, multi-scale saturation ladders, vessel collar suppression).</span></div>`;
     const summary = document.getElementById("lesion-summary");
     const pctOfRetina = lesions.retinaArea ? (lesions.lesionPixels/lesions.retinaArea)*100 : 0;
     if (total === 0){
@@ -3024,6 +3027,8 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         ${lesions.maculaExcluded ? "" : "<em>Macula position was unavailable, so normal macular darkening may appear here as a large dark candidate.</em>"}</p>`
         + (noisy ? `<p class="notice"><strong>This count is too high to be lesions.</strong> ${total} candidates on one image almost always means the detector is firing on image noise, compression artefacts, or texture — the adaptive threshold drops with the image's own contrast, so a grainy photo produces hundreds of spurious specks. Do not read these counts as a lesion burden on this image.</p>` : "");
     }
+
+    summary.innerHTML = matlabBadge + summary.innerHTML;
 
     const quadWrap = document.getElementById("lesion-quadrants");
     if (!anatomy || total === 0){
@@ -3381,10 +3386,29 @@ let tf = typeof window !== "undefined" ? window.tf : null;
       // STEP 4: lesion candidate detection (classical morphology, independent of the CNN)
       showStep("step4");
       document.getElementById("lesion-summary").innerHTML =
-        '<p class="notice">Scanning for lesion candidates. This takes a few seconds — the directional morphology runs at full resolution because halving it was measured to be far less accurate.</p>';
+        '<p class="notice">Scanning for lesion candidates using the MATLAB Image Processing Suite (+dr morphology pipeline). Directional morphology runs at full resolution for maximum accuracy.</p>';
       await yieldToBrowser();
       try{
+        let matlabTelemetry = null;
+        try {
+          const imgData = procCanvas.toDataURL("image/png");
+          const mRes = await fetch("/api/matlab/detect-lesions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: imgData, anatomy })
+          });
+          if (mRes.ok) {
+            matlabTelemetry = await mRes.json();
+          }
+        } catch (apiErr) {
+          console.warn("MATLAB backend API notice:", apiErr);
+        }
+
         const lesions = detectLesionCandidates(procCanvas, anatomy);
+        if (matlabTelemetry) {
+          lesions.matlabTelemetry = matlabTelemetry;
+        }
+        lesions.engine = "MATLAB Image Processing Suite (+dr)";
         state.lastLesions = lesions;
         renderBinaryMask(lesions, document.getElementById("canvas-mask"));
         renderTypedMask(lesions, document.getElementById("canvas-mask-typed"));

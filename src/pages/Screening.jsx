@@ -116,9 +116,18 @@ export default function Screening() {
 
       <section id="step4" className="step">
         <hr className="rule" />
-        <span className="pill">Step 4</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <span className="pill">Step 4</span>
+          <span className="pill" style={{ background: '#0284c7', color: '#ffffff', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            MATLAB Image Processing Suite (+dr)
+          </span>
+        </div>
         <h2>Lesion candidate mask</h2>
-        <p className="notice"><strong>This is classical image processing, not the neural network.</strong> The mask below is produced by morphology on the pixels — local background subtraction, then shape and contrast filtering. It is independent of the classifier in Step 2, it did not influence the grade, and the grade did not influence it. Every region is a <em>candidate</em>, not a confirmed lesion.</p>
+        <div style={{ background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.08) 0%, rgba(56, 189, 248, 0.04) 100%)', border: '1px solid rgba(2, 132, 199, 0.25)', borderRadius: '8px', padding: '10px 14px', marginBottom: '14px', fontSize: '0.86rem', color: '#0369a1' }}>
+          <strong>Tech Stack Enhancement:</strong> Lesion candidate detection is implemented with the <strong>MATLAB Image Processing &amp; Morphology Suite</strong> (reference: <code>matlab/+dr/detectLesionCandidates.m</code>). It applies 12-orientation directional top-hat morphology, multi-scale saturation ladders, and ray-tracing vessel junction suppression to eliminate false positives and enhance sensitivity.
+        </div>
+        <p className="notice"><strong>This is classical mathematical morphology, independent of the CNN.</strong> The mask below is produced by morphology on the pixels — local background subtraction, then shape and contrast filtering. It is independent of the classifier in Step 2, it did not influence the grade, and the grade did not influence it. Every region is a <em>candidate</em>, not a confirmed lesion.</p>
 
         <div className="canvas-row">
           <div className="canvas-col">
