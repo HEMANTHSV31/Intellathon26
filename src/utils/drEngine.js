@@ -61,22 +61,22 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // so they follow each image rather than assuming one camera. Lowering DARK_K
   // finds fainter lesions and more noise; MIN_CONTRAST_K is the backstop that
   // keeps that trade from turning into speckle.
-  const DARK_K = 2.2;
-  const BRIGHT_K = 2.2;
-  let MIN_CONTRAST_K = 1.6;
+  const DARK_K = 3.5;
+  const BRIGHT_K = 4.0;
+  let MIN_CONTRAST_K = 3.0;
   // Absolute floors in grey levels. Without these the detector collapses on a
   // smooth image: a low noise estimate drives the adaptive threshold down to a
   // few grey levels, and normal choroidal texture then reads as lesions. A real
   // microaneurysm sits well below its background and a real exudate well above,
   // so nothing genuine is lost by refusing to look below these.
-  const DARK_FLOOR = 4.0;
-  const BRIGHT_FLOOR = 4.0;
-  const DARK_CONTRAST_FLOOR = 4.0;
-  const BRIGHT_CONTRAST_FLOOR = 4.0;
+  const DARK_FLOOR = 10;
+  const BRIGHT_FLOOR = 12;
+  const DARK_CONTRAST_FLOOR = 9;
+  const BRIGHT_CONTRAST_FLOOR = 11;
   // Cotton wool spots are a quarter to a half disc diameter across. Anything
   // small and soft-edged is far more likely to be defocus or an artefact, so
   // the class carries a size requirement rather than accepting every soft blob.
-  const CWS_MIN_AREA_FRAC = 0.00005;
+  const CWS_MIN_AREA_FRAC = 0.0004;
   // Anything sizeable this far out from the centre of the aperture is an imaging
   // artifact, not a lesion: shadows from pupil misalignment, peripapillary
   // crescents and lens flare all live at the edge of the field and can be large.
@@ -143,11 +143,11 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // behaved like an on/off switch: it was the only thing connected to anything.
   // An upper quantile sits in the tail where the signal actually is, so the
   // threshold now tracks the camera, the exposure and the enhancement.
-  const SEED_TAIL_Q = 0.91;
+  const SEED_TAIL_Q = 0.97;
   // Backstops in grey levels, for an image whose tail estimate collapses — a
   // near-uniform frame, or one where the retina barely fills the aperture.
-  let SEED_FLOOR_DARK = 4.0;
-  let SEED_FLOOR_BRIGHT = 4.0;
+  let SEED_FLOOR_DARK = 8;
+  let SEED_FLOOR_BRIGHT = 10;
   // ---- Scale saturation, the test that separates lesions from vessel geometry.
   //
   // Amplitude cannot do it. Measured over the retina, the top-hat response of a
@@ -215,7 +215,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // loosening the cut from 1.05 to 1.10 recovers three lesions per three retinas
   // for one extra false mark; past 1.15 the false marks climb without buying any
   // further recall.
-  let SATURATION_MAX_GROWTH = 1.25;
+  let SATURATION_MAX_GROWTH = 1.10;
   // A region is only discarded as vessel when this much of it lies on the vessel
   // map. Set too low, lesions touching a vessel are lost with it.
   const VESSEL_OVERLAP_REJECT = 0.78;
@@ -1617,6 +1617,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     ctx.drawImage(sourceCanvas, 0, 0);
 
     const disc = anatomy.disc, fovea = anatomy.fovea;
+    const splitX = (fovea && typeof fovea.x === "number") ? ((disc.x + fovea.x) / 2) : disc.x;
     const fontPx = Math.max(10, Math.round(w*0.024));
     const pad = Math.round(fontPx*0.5) + 2;
 
@@ -1626,12 +1627,12 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     ctx.lineWidth = 3; ctx.strokeStyle = "#fff";
     ctx.beginPath();
     ctx.moveTo(0, disc.y); ctx.lineTo(w, disc.y);
-    ctx.moveTo(disc.x, 0); ctx.lineTo(disc.x, h);
+    ctx.moveTo(splitX, 0); ctx.lineTo(splitX, h);
     ctx.stroke();
     ctx.lineWidth = 1; ctx.strokeStyle = "#000";
     ctx.beginPath();
     ctx.moveTo(0, disc.y); ctx.lineTo(w, disc.y);
-    ctx.moveTo(disc.x, 0); ctx.lineTo(disc.x, h);
+    ctx.moveTo(splitX, 0); ctx.lineTo(splitX, h);
     ctx.stroke();
     ctx.restore();
 
@@ -2205,7 +2206,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
   // can see which marks sit on the vasculature. The factor is deliberately
   // modest: enough to drop a wide spot in a vein that is only as dark as the
   // vein, not enough to drop a focal lesion on one.
-  const ON_VESSEL_CONTRAST_FACTOR = 1.15;
+  const ON_VESSEL_CONTRAST_FACTOR = 1.35;
   // A candidate with vessel persisting outward in this much of every direction
   // is inside the vascular tree, not a discrete lesion within it. Because the
   // measure is now persistence rather than mere presence, a lesion's collar
@@ -2526,7 +2527,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     const sharpEdgeThresh = meanGrad*1.5;
 
     const maxArea = Math.round(n*0.030);
-    const minArea = Math.max(3, Math.round(n*0.000004));
+    const minArea = Math.max(6, Math.round(n*0.000012));
     const maMaxArea = Math.max(minArea+1, Math.round(n*0.00018));
     const cwsMinArea = Math.round(n*CWS_MIN_AREA_FRAC);
 
@@ -2698,15 +2699,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         // vessel scores well on it simply for being a vessel. A candidate on the
         // vasculature therefore has to clear a higher bar than one in open
         // retina before the same figure means the same thing.
-        let bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
-        let isPerimacular = false;
-        if (anatomy && anatomy.fovea) {
-          const dFov = Math.hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y);
-          isPerimacular = dFov <= (anatomy.maculaRadius * 2.5);
-        }
-        if (isPerimacular && !dark) {
-          bar = bar * 0.75;
-        }
+        const bar = Math.max(floor, noise*MIN_CONTRAST_K) * (onVessel ? ON_VESSEL_CONTRAST_FACTOR : 1);
         if (c.maxContrast < bar){ rejected.weak++; return; }
 
         let type;
@@ -2715,7 +2708,7 @@ let tf = typeof window !== "undefined" ? window.tf : null;
             ? LESION_TYPES.MA : LESION_TYPES.HEM;
         } else if (c.meanGradient >= sharpEdgeThresh){
           type = LESION_TYPES.HE;
-        } else if (c.area >= cwsMinArea || (c.maxContrast >= bar*0.85 && c.area >= Math.max(4, Math.round(n*0.00003)))){
+        } else if (c.area >= cwsMinArea){
           type = LESION_TYPES.CWS;
         } else {
           rejected.weak++; return;
@@ -3504,10 +3497,17 @@ let tf = typeof window !== "undefined" ? window.tf : null;
 
       // Persist clinical result to IndexedDB for offline rural health workers
       try {
-        const fileInput = document.getElementById("file-input");
-        const fileName = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0].name : "Fundus Capture";
+        const currentPatientId = window._currentPatientId || null;
+        const currentPatientName = window._currentPatientName || null;
+        const currentPatientPhone = window._currentPatientPhone || null;
+        const currentEye = window._currentPatientEye || (state.lastAnatomy?.eye ? (state.lastAnatomy.eye.includes('Right') ? 'OD' : 'OS') : null);
+
         const screeningRecord = {
           fileName,
+          patientId: currentPatientId,
+          patientName: currentPatientName,
+          patientPhone: currentPatientPhone,
+          eye: currentEye,
           timestamp: Date.now(),
           qualityVerdict: state.lastQuality?.verdict || "usable",
           qualityReason: state.lastQuality?.reason || "",
@@ -3529,6 +3529,24 @@ let tf = typeof window !== "undefined" ? window.tf : null;
           fileType: file.type || "image/jpeg",
           imageData: working.toDataURL("image/jpeg", 0.88)
         });
+
+        // Also push directly to Supabase if reachable
+        try {
+          const token = localStorage.getItem('dr_token');
+          const hdrs = { 'Content-Type': 'application/json' };
+          if (token) hdrs['Authorization'] = `Bearer ${token}`;
+          await fetch('/api/screenings/upload', {
+            method: 'POST',
+            headers: hdrs,
+            body: JSON.stringify({
+              id: 'scr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+              ...screeningRecord,
+              imageData: working.toDataURL("image/jpeg", 0.85)
+            })
+          });
+        } catch (supaErr) {
+          console.log('[Supabase sync] Saved to local queue, will sync when online:', supaErr.message);
+        }
       } catch (saveRecErr) {
         console.warn("Could not persist screening report or image to IndexedDB:", saveRecErr);
       }
@@ -3539,6 +3557,72 @@ let tf = typeof window !== "undefined" ? window.tf : null;
     } finally{
       $("#run-button").disabled = false;
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // IMAGE QUALITY VALIDATION FOR INTAKE & UPLOAD
+  // ---------------------------------------------------------------------
+  export async function validateImageQuality(file) {
+    try {
+      const img = await loadImageFile(file);
+      if (!img || img.width === 0 || img.height === 0) {
+        return {
+          valid: false,
+          reason: "Unable to read image file data. The file may be corrupt or not a valid image format."
+        };
+      }
+
+      // 1. Resolution Check:
+      // A fundus photograph below 256x256 lacks retinal micro-details (microaneurysms are 10-50um)
+      // and cannot be reliably upscaled without hallucinating or losing diagnostic evidence.
+      if (img.width < 256 || img.height < 256) {
+        return {
+          valid: false,
+          reason: `Image resolution (${img.width}×${img.height} px) is too low to be upscaled or assessed with diagnostic reliability. Minimum resolution required is 256×256 px. Please upload a full-resolution fundus capture.`
+        };
+      }
+
+      const tempCanvas = document.createElement("canvas");
+      drawToCanvas(img, tempCanvas, WORKING_MAX_DIM);
+
+      const metrics = computeMetrics(tempCanvas);
+      const verdict = assessQuality(metrics);
+
+      if (verdict.verdict === "reject") {
+        return {
+          valid: false,
+          reason: verdict.reason || "Image quality too low to analyze. Recapture with proper illumination and focus.",
+          metrics,
+          width: img.width,
+          height: img.height
+        };
+      }
+
+      return {
+        valid: true,
+        verdict: verdict.verdict,
+        reasons: verdict.reasons || [],
+        metrics,
+        width: img.width,
+        height: img.height,
+        thumbnail: tempCanvas.toDataURL("image/jpeg", 0.82)
+      };
+    } catch (err) {
+      return {
+        valid: false,
+        reason: "Failed to validate image quality: " + (err.message || err)
+      };
+    }
+  }
+
+  export async function runPipelineWithMeta(file, patientMeta) {
+    if (patientMeta) {
+      window._currentPatientId = patientMeta.patientId;
+      window._currentPatientName = patientMeta.patientName;
+      window._currentPatientPhone = patientMeta.patientPhone;
+      window._currentPatientEye = patientMeta.eye;
+    }
+    return runPipeline(file);
   }
 
   // ---------------------------------------------------------------------

@@ -1,184 +1,155 @@
 require('dotenv').config();
+const dns = require('dns');
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('verbatim');
+}
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const dbUrl = process.env.DATABASE_URL || '';
-const hasPlaceholderPassword = dbUrl.includes('[YOUR-PASSWORD]') || !dbUrl;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
+});
 
-let isPgConnected = false;
-let pgPool = null;
+// Gracefully handle idle client errors (like transient cloud ECONNRESET) to prevent Node process termination
+pool.on('error', (err) => {
+  console.warn('[Supabase DB Pool] Idle client notice (recovering automatically):', err.code || err.message);
+});
 
-if (!hasPlaceholderPassword) {
-  try {
-    pgPool = new Pool({
-      connectionString: dbUrl,
-      ssl: { rejectUnauthorized: false }
-    });
-  } catch (e) {
-    console.warn('Failed to initialize PostgreSQL pool:', e.message);
-  }
-}
+async function initDb(maxRetries = 5) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let client;
+    try {
+      client = await pool.connect();
+      console.log('Connected to Supabase PostgreSQL database.');
 
-// Local fallback JSON user store in server/data/users.json
-const dataDir = path.join(__dirname, 'data');
-const localDbPath = path.join(dataDir, 'users.json');
+      // Create app_roles table and seed default roles
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS app_roles (
+          role VARCHAR(50) PRIMARY KEY,
+          description TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
 
-function ensureLocalDb() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (!fs.existsSync(localDbPath)) {
-    fs.writeFileSync(localDbPath, JSON.stringify([], null, 2));
-  }
-}
+        INSERT INTO app_roles (role, description) VALUES
+          ('patient', 'Patient accessing individual reports and health records'),
+          ('operator', 'Field health worker or screening operator uploading fundus imagery'),
+          ('doctor', 'Ophthalmologist or medical specialist assessing gradings and diagnoses'),
+          ('admin', 'System administrator managing users, roles, and clinics')
+        ON CONFLICT (role) DO UPDATE SET description = EXCLUDED.description;
+      `);
 
-function readLocalUsers() {
-  ensureLocalDb();
-  try {
-    const raw = fs.readFileSync(localDbPath, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
+      // Create users table if it does not already exist
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          full_name VARCHAR(255),
+          role VARCHAR(50) DEFAULT 'operator' REFERENCES app_roles(role),
+          phone VARCHAR(50),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          last_login TIMESTAMPTZ
+        );
 
-function writeLocalUsers(users) {
-  ensureLocalDb();
-  fs.writeFileSync(localDbPath, JSON.stringify(users, null, 2));
-}
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'operator';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+      `);
 
-// Fallback query emulator for local JSON storage
-function executeLocalQuery(sql, params = []) {
-  const users = readLocalUsers();
-  const lowerSql = sql.toLowerCase();
+      // Create patients table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS patients (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          operator_id UUID REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
 
-  // 1. SELECT id FROM users WHERE LOWER(email) = $1
-  if (lowerSql.includes('select id from users where lower(email) =')) {
-    const targetEmail = (params[0] || '').toLowerCase();
-    const match = users.find(u => (u.email || '').toLowerCase() === targetEmail);
-    return { rows: match ? [{ id: match.id }] : [] };
-  }
+      // Create uploaded_screenings table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS uploaded_screenings (
+          id VARCHAR(255) PRIMARY KEY,
+          user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+          patient_id VARCHAR(255),
+          patient_name VARCHAR(255),
+          patient_phone VARCHAR(50),
+          operator_id UUID REFERENCES users(id) ON DELETE SET NULL,
+          eye VARCHAR(50),
+          file_name VARCHAR(255),
+          image_data TEXT,
+          prediction VARCHAR(255),
+          confidence FLOAT,
+          dr_score FLOAT,
+          icdr_grade VARCHAR(255),
+          referable BOOLEAN DEFAULT FALSE,
+          quality_verdict VARCHAR(50),
+          quality_reason TEXT,
+          recommendations JSONB,
+          lesion_counts JSONB,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          synced_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
 
-  // 2. SELECT id, email, password_hash, full_name FROM users WHERE LOWER(email) = $1
-  if (lowerSql.includes('select id, email, password_hash, full_name from users where lower(email) =')) {
-    const targetEmail = (params[0] || '').toLowerCase();
-    const match = users.find(u => (u.email || '').toLowerCase() === targetEmail);
-    return { rows: match ? [{ id: match.id, email: match.email, password_hash: match.password_hash, full_name: match.full_name }] : [] };
-  }
+      // Ensure patient columns exist if uploaded_screenings already pre-existed
+      await client.query(`
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS severity_level VARCHAR(50) DEFAULT 'LOW';
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'pending';
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL;
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 
-  // 3. INSERT INTO users (email, password_hash, full_name, last_login) VALUES ... RETURNING id, email, full_name, created_at
-  if (lowerSql.includes('insert into users')) {
-    const newUser = {
-      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36),
-      email: params[0],
-      password_hash: params[1],
-      full_name: params[2] || null,
-      created_at: new Date().toISOString(),
-      last_login: new Date().toISOString()
-    };
-    users.push(newUser);
-    writeLocalUsers(users);
-    return {
-      rows: [{
-        id: newUser.id,
-        email: newUser.email,
-        full_name: newUser.full_name,
-        created_at: newUser.created_at
-      }]
-    };
-  }
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_id VARCHAR(255);
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_name VARCHAR(255);
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_phone VARCHAR(50);
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS operator_id UUID REFERENCES users(id) ON DELETE SET NULL;
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS eye VARCHAR(50);
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS severity_level VARCHAR(50) DEFAULT 'LOW';
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'pending';
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS dr_softmax FLOAT;
+      `);
 
-  // 4. UPDATE users SET last_login = NOW() WHERE id = $1
-  if (lowerSql.includes('update users set last_login')) {
-    const userId = params[0];
-    const u = users.find(x => x.id === userId);
-    if (u) {
-      u.last_login = new Date().toISOString();
-      writeLocalUsers(users);
-    }
-    return { rows: [] };
-  }
-
-  // 5. SELECT id, email, full_name, created_at, last_login FROM users WHERE id = $1
-  if (lowerSql.includes('from users where id =')) {
-    const userId = params[0];
-    const match = users.find(u => u.id === userId);
-    return { rows: match ? [match] : [] };
-  }
-
-  return { rows: [] };
-}
-
-// Wrapper pool object matching pg Pool interface
-const pool = {
-  async query(sql, params) {
-    if (isPgConnected && pgPool) {
-      try {
-        return await pgPool.query(sql, params);
-      } catch (err) {
-        console.warn('PostgreSQL query error, falling back to local user store:', err.message);
-        return executeLocalQuery(sql, params);
+      console.log('Database tables (app_roles, users, patients, uploaded_screenings) verified/created in Supabase Postgres.');
+      client.release();
+      return;
+    } catch (err) {
+      if (client) client.release();
+      console.warn(`[Supabase DB init] Attempt ${attempt}/${maxRetries} failed (${err.code || err.message})...`);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      } else {
+        console.error('Final database initialization error:', err);
       }
     }
-    return executeLocalQuery(sql, params);
   }
-};
+}
 
-async function initDb() {
-  if (hasPlaceholderPassword || !pgPool) {
-    console.log('PostgreSQL password is not configured yet in .env; using secure local persistent user store.');
-    ensureLocalDb();
-    return;
-  }
-
-  try {
-    const client = await pgPool.connect();
-    console.log('Connecting to Supabase PostgreSQL database...');
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        full_name VARCHAR(255),
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        last_login TIMESTAMPTZ
-      );
-    `);
-
-    // Create uploaded_screenings table for fundus images and screening results
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS uploaded_screenings (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-        file_name VARCHAR(255),
-        image_data TEXT,
-        prediction VARCHAR(100),
-        confidence NUMERIC,
-        dr_score NUMERIC,
-        icdr_grade VARCHAR(100),
-        referable BOOLEAN DEFAULT false,
-        quality_verdict VARCHAR(50),
-        quality_reason TEXT,
-        recommendations JSONB,
-        lesion_counts JSONB,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        synced_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    console.log('Database tables verified/created in Supabase Postgres.');
-    client.release();
-  } catch (err) {
-    isPgConnected = false;
-    console.warn('Supabase Postgres connection failed (' + err.message + '). Active local user fallback enabled.');
-    ensureLocalDb();
+async function query(text, params, maxRetries = 5) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await pool.query(text, params);
+    } catch (err) {
+      attempt++;
+      const isTransient = err.code === 'EAI_AGAIN' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.message?.includes('EAI_AGAIN') || err.message?.includes('ECONNRESET');
+      if (attempt >= maxRetries || !isTransient) {
+        throw err;
+      }
+      console.warn(`[Supabase DB] Transient network error (${err.code || err.message}), retrying query attempt ${attempt}/${maxRetries}...`);
+      await new Promise(r => setTimeout(r, 600 * attempt));
+    }
   }
 }
 
 module.exports = {
   pool,
+  query,
   initDb
 };

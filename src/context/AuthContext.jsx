@@ -127,11 +127,11 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const signup = async (email, password, fullName) => {
+  const signup = async (email, password, fullName, role = 'operator', phone = '') => {
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, fullName })
+      body: JSON.stringify({ email, password, fullName, role, phone })
     })
 
     const data = await res.json()
@@ -149,6 +149,14 @@ export function AuthProvider({ children }) {
     return data
   }
 
+  const switchRole = (newRole) => {
+    if (!user) return
+    const updatedUser = { ...user, role: newRole }
+    setUser(updatedUser)
+    localStorage.setItem('dr_user', JSON.stringify(updatedUser))
+    if (token) saveOfflineAuthSession(updatedUser, token).catch(() => {})
+  }
+
   const checkEmail = async (email) => {
     const res = await cachedFetch('/api/auth/check-email', {
       method: 'POST',
@@ -156,6 +164,28 @@ export function AuthProvider({ children }) {
       body: JSON.stringify({ email })
     })
     return res.json()
+  }
+
+  const patientLogin = async (query) => {
+    const cleanQuery = (query || '').trim().toLowerCase()
+    const res = await fetch('/api/auth/patient-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: cleanQuery })
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error || 'No patient record found in database')
+    }
+
+    setToken(data.token)
+    setUser(data.user)
+    localStorage.setItem('dr_token', data.token)
+    localStorage.setItem('dr_user', JSON.stringify(data.user))
+
+    await saveOfflineAuthSession(data.user, data.token)
+    return data
   }
 
   const logout = async () => {
@@ -170,12 +200,15 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider
       value={{
         user,
+        role: user?.role || 'operator',
         token,
         loading,
         isAuthenticated: !!token && !!user,
         isOffline,
         login,
         signup,
+        patientLogin,
+        switchRole,
         checkEmail,
         logout
       }}

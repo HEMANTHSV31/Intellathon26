@@ -409,7 +409,7 @@ function out = detectLesionCandidates(I, anatomy)
                 d2 = Inf;
             end
             if d2 <= (discR*1.15)^2
-                rejected.disc = rejected.disc + 1;  continue;
+                rejected.disc = rejected.disc + 1; continue;
             end
 
             % Outside that circle the disc can still be the explanation for a
@@ -425,10 +425,10 @@ function out = detectLesionCandidates(I, anatomy)
             % finding worth more than everything this rule removes.
             if ~dark && d2 <= (discR*C.disc.peripapillaryMult)^2
                 if discTissueFrac(c) >= C.disc.tissueOverlap
-                    rejected.discTissue = rejected.discTissue + 1;  continue;
+                    rejected.discTissue = rejected.discTissue + 1; continue;
                 end
                 if looksLikeDiscTissue(c)
-                    rejected.discColour = rejected.discColour + 1;  continue;
+                    rejected.discColour = rejected.discColour + 1; continue;
                 end
             end
 
@@ -436,37 +436,30 @@ function out = detectLesionCandidates(I, anatomy)
             % a lesion: a shadow from pupil misalignment, or peripapillary
             % vignetting. Genuine peripheral lesions are small, so the rule is
             % keyed on size as well as on position and small ones stay.
-            if c.area >= edgeArtifactArea
-                de2 = (c.cx - ap.cx)^2 + (c.cy - ap.cy)^2;
-                if de2 > edgeR2
-                    rejected.edge = rejected.edge + 1;  continue;
-                end
+            de2 = (c.cx - ap.cx)^2 + (c.cy - ap.cy)^2;
+            if (c.area >= edgeArtifactArea && de2 > edgeR2)
+                rejected.edge = rejected.edge + 1; continue;
             end
 
             if c.aspect > 4.0 && c.fillRatio < 0.30
-                rejected.streak = rejected.streak + 1;  continue;
+                rejected.streak = rejected.streak + 1; continue;
             end
 
-            % A region lying almost entirely on the vessel map is a piece of
-            % vessel, whatever seeded it. The threshold is high on purpose: a
-            % lesion touching a vessel overlaps it partially and must survive.
-            if nnz(vesselZone(c.pixels))/numel(c.pixels) > L.vesselOverlapReject
-                rejected.vessel = rejected.vessel + 1;  continue;
+            vOverlap = nnz(vesselZone(c.pixels))/numel(c.pixels);
+            if vOverlap > L.vesselOverlapReject
+                rejected.vessel = rejected.vessel + 1; continue;
             end
 
-            % Crossings, bifurcations, bends and choroidal mottling answer the
-            % roundness test at one element length exactly as a lesion does. They
-            % are told apart by whether the response stops growing when the
-            % element does: a lesion is bounded, they are not.
             if failsSaturation(c, dark)
-                rejected.unbounded = rejected.unbounded + 1;  continue;
+                rejected.unbounded = rejected.unbounded + 1;
+                continue;
             end
 
             onVessel = false;
             if dark && c.area <= junctionMaxArea
                 ctx = dr.vesselArms(c.cx, c.cy, c.area, vesselZone, junctionArmLen);
                 if dr.isVesselJunction(ctx)
-                    rejected.junction = rejected.junction + 1;  continue;
+                    rejected.junction = rejected.junction + 1; continue;
                 end
                 onVessel = dr.isThroughVessel(ctx) || ctx.arms >= 1;
             end
@@ -485,17 +478,6 @@ function out = detectLesionCandidates(I, anatomy)
                 bar = bar * L.onVesselContrastFactor;
             end
 
-            % Perimacular tolerance: lesions near the fovea/macula (including cotton wool spots
-            % along the papillomacular bundle) reside on a darker retinal background.
-            isPerimacular = false;
-            if hasMacula && isfield(anatomy.fovea, "x")
-                dFovea = hypot(c.cx - anatomy.fovea.x, c.cy - anatomy.fovea.y);
-                isPerimacular = dFovea <= (anatomy.maculaRadius * 2.5);
-            end
-            if isPerimacular && ~dark
-                bar = bar * 0.75;
-            end
-
             if c.maxContrast < bar
                 rejected.weak = rejected.weak + 1;  continue;
             end
@@ -508,7 +490,7 @@ function out = detectLesionCandidates(I, anatomy)
                 end
             elseif c.meanGradient >= sharpEdgeThresh
                 typeKey = "HE";
-            elseif c.area >= cwsMinArea || (c.maxContrast >= bar*0.85 && c.area >= max(4, round(n*0.00003)))
+            elseif c.area >= cwsMinArea
                 typeKey = "CWS";
             else
                 rejected.weak = rejected.weak + 1;  continue;
