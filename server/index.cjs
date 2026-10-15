@@ -370,6 +370,9 @@ app.get('/api/stats', async (req, res) => {
   } catch (err) {
     console.error('Fetch stats error:', err);
     return res.status(500).json({ error: 'Failed to retrieve stats' });
+  }
+});
+
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
