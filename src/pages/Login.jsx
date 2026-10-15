@@ -142,8 +142,8 @@ export default function Login() {
             padding: '0.65rem 0.5rem',
             background: 'transparent',
             border: 'none',
-            borderBottom: activeTab === 'patient' ? '2.5px solid #0f766e' : '2.5px solid transparent',
-            color: activeTab === 'patient' ? '#0f766e' : '#64748b',
+            borderBottom: activeTab === 'patient' ? '2px solid #0f172a' : '2px solid transparent',
+            color: activeTab === 'patient' ? '#0f172a' : '#64748b',
             fontWeight: activeTab === 'patient' ? 600 : 500,
             fontSize: '0.88rem',
             cursor: 'pointer',
@@ -161,7 +161,7 @@ export default function Login() {
             padding: '0.65rem 0.5rem',
             background: 'transparent',
             border: 'none',
-            borderBottom: activeTab === 'staff' ? '2.5px solid #0f172a' : '2.5px solid transparent',
+            borderBottom: activeTab === 'staff' ? '2px solid #0f172a' : '2px solid transparent',
             color: activeTab === 'staff' ? '#0f172a' : '#64748b',
             fontWeight: activeTab === 'staff' ? 600 : 500,
             fontSize: '0.88rem',
@@ -226,13 +226,14 @@ export default function Login() {
                 type="button"
                 onClick={() => setPatientInput('Ramesh Kumar 9876543210')}
                 style={{
-                  background: 'transparent',
+                  background: '#ffffff',
                   border: '1px solid #cbd5e1',
-                  borderRadius: 3,
+                  borderRadius: 4,
                   padding: '2px 8px',
                   fontSize: '0.72rem',
                   cursor: 'pointer',
-                  color: '#0f766e'
+                  color: '#0f172a',
+                  fontWeight: 500
                 }}
               >
                 Autofill
@@ -248,10 +249,11 @@ export default function Login() {
                 fontSize: '0.88rem',
                 fontWeight: 600,
                 color: '#ffffff',
-                background: '#0f766e',
+                background: '#0f172a',
                 border: 'none',
                 borderRadius: 5,
-                cursor: patientSubmitting ? 'not-allowed' : 'pointer'
+                cursor: patientSubmitting ? 'not-allowed' : 'pointer',
+                transition: 'background 0.15s ease'
               }}
             >
               {patientSubmitting ? 'Verifying Registry…' : 'Access My Screening Record'}
@@ -285,13 +287,13 @@ export default function Login() {
                 onClick={() => fillStaffDemo('operator')}
                 style={{
                   flex: 1,
-                  padding: '3px 6px',
-                  fontSize: '0.74rem',
-                  fontWeight: role === 'operator' ? 600 : 400,
+                  padding: '4px 8px',
+                  fontSize: '0.76rem',
+                  fontWeight: role === 'operator' ? 600 : 500,
                   background: role === 'operator' ? '#0f172a' : '#ffffff',
                   color: role === 'operator' ? '#ffffff' : '#334155',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 3,
+                  border: `1px solid ${role === 'operator' ? '#0f172a' : '#cbd5e1'}`,
+                  borderRadius: 4,
                   cursor: 'pointer'
                 }}
               >
@@ -302,13 +304,13 @@ export default function Login() {
                 onClick={() => fillStaffDemo('doctor')}
                 style={{
                   flex: 1,
-                  padding: '3px 6px',
-                  fontSize: '0.74rem',
-                  fontWeight: role === 'doctor' ? 600 : 400,
+                  padding: '4px 8px',
+                  fontSize: '0.76rem',
+                  fontWeight: role === 'doctor' ? 600 : 500,
                   background: role === 'doctor' ? '#0f172a' : '#ffffff',
                   color: role === 'doctor' ? '#ffffff' : '#334155',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 3,
+                  border: `1px solid ${role === 'doctor' ? '#0f172a' : '#cbd5e1'}`,
+                  borderRadius: 4,
                   cursor: 'pointer'
                 }}
               >
@@ -319,13 +321,13 @@ export default function Login() {
                 onClick={() => fillStaffDemo('admin')}
                 style={{
                   flex: 1,
-                  padding: '3px 6px',
-                  fontSize: '0.74rem',
-                  fontWeight: role === 'admin' ? 600 : 400,
+                  padding: '4px 8px',
+                  fontSize: '0.76rem',
+                  fontWeight: role === 'admin' ? 600 : 500,
                   background: role === 'admin' ? '#0f172a' : '#ffffff',
                   color: role === 'admin' ? '#ffffff' : '#334155',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 3,
+                  border: `1px solid ${role === 'admin' ? '#0f172a' : '#cbd5e1'}`,
+                  borderRadius: 4,
                   cursor: 'pointer'
                 }}
               >

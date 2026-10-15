@@ -75,11 +75,11 @@ export default function Pipeline() {
         {matlabStatus && (
           <div style={{
             fontSize: '12px',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            background: matlabStatus.matlabInstalled ? '#e6f4ea' : '#f0f4f9',
-            border: `1px solid ${matlabStatus.matlabInstalled ? '#137333' : '#a8c7fa'}`,
-            color: matlabStatus.matlabInstalled ? '#137333' : '#1a73e8',
+            padding: '5px 12px',
+            borderRadius: '5px',
+            background: matlabStatus.matlabInstalled ? '#f0fdf4' : '#f0f9ff',
+            border: `1px solid ${matlabStatus.matlabInstalled ? '#bbf7d0' : '#bae6fd'}`,
+            color: matlabStatus.matlabInstalled ? '#166534' : '#0369a1',
             fontWeight: 500
           }}>
             {matlabStatus.matlabInstalled
@@ -89,7 +89,7 @@ export default function Pipeline() {
         )}
       </div>
 
-      <div className="notice" style={{ background: '#f8fafc', borderLeft: '4px solid #005a9e' }}>
+      <div className="notice" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '4px solid #0f172a', borderRadius: '5px' }}>
         <strong>Systems Engineering Capacity Model (MATLAB / Simulink).</strong> This clinical throughput
         planning model is implemented as a formal <strong>Simulink dynamic block model</strong> in MATLAB
         (<code>screening_pipeline_model.slx</code>). It evaluates signal flow, saturation ceilings, and
@@ -98,18 +98,19 @@ export default function Pipeline() {
       </div>
 
       {/* View Switcher Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', margin: '1.25rem 0 1rem' }}>
+      <div style={{ display: 'flex', gap: '0.4rem', margin: '1.25rem 0 1rem' }}>
         <button
           type="button"
           onClick={() => setActiveTab('flow')}
           style={{
-            padding: '8px 16px',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            background: activeTab === 'flow' ? '#005a9e' : '#fff',
-            color: activeTab === 'flow' ? '#fff' : '#222',
-            fontWeight: 600,
-            cursor: 'pointer'
+            padding: '6px 14px',
+            borderRadius: '5px',
+            border: `1px solid ${activeTab === 'flow' ? '#0f172a' : '#cbd5e1'}`,
+            background: activeTab === 'flow' ? '#0f172a' : '#ffffff',
+            color: activeTab === 'flow' ? '#ffffff' : '#475569',
+            fontWeight: activeTab === 'flow' ? 600 : 500,
+            cursor: 'pointer',
+            fontSize: '0.84rem'
           }}
         >
           Signal-Flow Block Diagram
@@ -118,13 +119,14 @@ export default function Pipeline() {
           type="button"
           onClick={() => setActiveTab('dynamic')}
           style={{
-            padding: '8px 16px',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            background: activeTab === 'dynamic' ? '#005a9e' : '#fff',
-            color: activeTab === 'dynamic' ? '#fff' : '#222',
-            fontWeight: 600,
-            cursor: 'pointer'
+            padding: '6px 14px',
+            borderRadius: '5px',
+            border: `1px solid ${activeTab === 'dynamic' ? '#0f172a' : '#cbd5e1'}`,
+            background: activeTab === 'dynamic' ? '#0f172a' : '#ffffff',
+            color: activeTab === 'dynamic' ? '#ffffff' : '#475569',
+            fontWeight: activeTab === 'dynamic' ? 600 : 500,
+            cursor: 'pointer',
+            fontSize: '0.84rem'
           }}
         >
           Simulink 365-Day Dynamic Queues
@@ -133,13 +135,14 @@ export default function Pipeline() {
           type="button"
           onClick={() => setActiveTab('matlab')}
           style={{
-            padding: '8px 16px',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            background: activeTab === 'matlab' ? '#005a9e' : '#fff',
-            color: activeTab === 'matlab' ? '#fff' : '#222',
-            fontWeight: 600,
-            cursor: 'pointer'
+            padding: '6px 14px',
+            borderRadius: '5px',
+            border: `1px solid ${activeTab === 'matlab' ? '#0f172a' : '#cbd5e1'}`,
+            background: activeTab === 'matlab' ? '#0f172a' : '#ffffff',
+            color: activeTab === 'matlab' ? '#ffffff' : '#475569',
+            fontWeight: activeTab === 'matlab' ? 600 : 500,
+            cursor: 'pointer',
+            fontSize: '0.84rem'
           }}
         >
           MATLAB / Simulink Files &amp; Code
