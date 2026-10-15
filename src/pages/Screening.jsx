@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { initScreening, validateImageQuality, runPipelineWithMeta } from '../utils/drEngine'
 
 export default function Screening() {
-  const { user, role, switchRole } = useAuth()
+  const { user, role } = useAuth()
   const activeRole = role || user?.role || 'operator'
 
   // Operator Patient Intake & Multi-Image State
@@ -38,7 +37,10 @@ export default function Screening() {
     isOpen: false,
     patient: null,
     images: [],
-    loading: false
+    loading: false,
+    doctorNotes: '',
+    doctorGrade: '',
+    saving: false
   })
 
   // Admin Search & Archival States
@@ -62,24 +64,28 @@ export default function Screening() {
   // Accurate live count of quality passed images in current operator session
   const sessionQualityPassedCount = acceptedImages.filter(img => img.verdict !== 'reject').length
 
-  useEffect(() => {
-    const cleanup = initScreening()
-    return () => {
-      if (typeof cleanup === 'function') cleanup()
-    }
-  }, [])
+  // Admin Backend-Based Search
+  const fetchAdminRecords = async (query = adminSearchQuery, sev = adminSeverityFilter, stat = adminStatusFilter) => {
+    setAdminSearchLoading(true)
+    const token = localStorage.getItem('dr_token')
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    try {
+      const qParams = new URLSearchParams()
+      if (query && query.trim()) qParams.set('search', query.trim())
+      if (sev && sev !== 'ALL') qParams.set('severity', sev)
+      if (stat && stat !== 'ALL') qParams.set('status', stat)
 
-  // Fetch live Supabase data on mount and whenever activeRole or filters change
-  useEffect(() => {
-    fetchLiveRoleData()
-  }, [activeRole, user, doctorQueueMode, doctorSeverityFilter])
-
-  // Fetch admin records when activeRole switches to admin
-  useEffect(() => {
-    if (activeRole === 'admin') {
-      fetchAdminRecords()
+      const res = await fetch(`/api/admin/records?${qParams.toString()}`, { headers })
+      if (res.ok) {
+        const data = await res.json()
+        setAdminRecords(data.records || [])
+      }
+    } catch (err) {
+      console.warn('Admin backend search error:', err)
+    } finally {
+      setAdminSearchLoading(false)
     }
-  }, [activeRole])
+  }
 
   const fetchLiveRoleData = async () => {
     setDataLoading(true)
@@ -137,36 +143,38 @@ export default function Screening() {
     }
   }
 
-  // Admin Backend-Based Search
-  const fetchAdminRecords = async (query = adminSearchQuery, sev = adminSeverityFilter, stat = adminStatusFilter) => {
-    setAdminSearchLoading(true)
-    const token = localStorage.getItem('dr_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
-    try {
-      const qParams = new URLSearchParams()
-      if (query && query.trim()) qParams.set('search', query.trim())
-      if (sev && sev !== 'ALL') qParams.set('severity', sev)
-      if (stat && stat !== 'ALL') qParams.set('status', stat)
-
-      const res = await fetch(`/api/admin/records?${qParams.toString()}`, { headers })
-      if (res.ok) {
-        const data = await res.json()
-        setAdminRecords(data.records || [])
-      }
-    } catch (err) {
-      console.warn('Admin backend search error:', err)
-    } finally {
-      setAdminSearchLoading(false)
+  useEffect(() => {
+    const cleanup = initScreening()
+    return () => {
+      if (typeof cleanup === 'function') cleanup()
     }
-  }
+  }, [])
 
-  // Doctor: Open Review Modal for Patient (Displays images, DR presence, DR softmax, lesion counts, severity)
+  // Fetch live Supabase data on mount and whenever activeRole or filters change
+  useEffect(() => {
+    fetchLiveRoleData()
+  }, [activeRole, user, doctorQueueMode, doctorSeverityFilter])
+
+  // Fetch admin records when activeRole switches to admin
+  useEffect(() => {
+    if (activeRole === 'admin') {
+      fetchAdminRecords()
+    }
+  }, [activeRole])
+
+  // Doctor: Open Review Modal for Patient (Displays images, DR presence, DR softmax, lesion counts, severity, staging override)
   const handleOpenDoctorReview = async (patient) => {
+    const defaultGrade = patient.doctor_grade || patient.primary_icdr_grade || 'No Apparent Retinopathy (Stage 0)'
+    const defaultNotes = patient.doctor_notes || ''
+
     setDoctorReviewModal({
       isOpen: true,
       patient,
       images: [],
-      loading: true
+      loading: true,
+      doctorNotes: defaultNotes,
+      doctorGrade: defaultGrade,
+      saving: false
     })
 
     const token = localStorage.getItem('dr_token')
@@ -176,11 +184,18 @@ export default function Screening() {
       const res = await fetch(`/api/screenings?patientId=${encodeURIComponent(patient.id.toLowerCase())}`, { headers })
       if (res.ok) {
         const data = await res.json()
+        const imagesList = data.screenings || []
+        const existingNotes = imagesList.find(i => i.doctor_notes)?.doctor_notes || defaultNotes
+        const existingGrade = imagesList.find(i => i.doctor_grade)?.doctor_grade || defaultGrade
+
         setDoctorReviewModal({
           isOpen: true,
           patient,
-          images: data.screenings || [],
-          loading: false
+          images: imagesList,
+          loading: false,
+          doctorNotes: existingNotes,
+          doctorGrade: existingGrade,
+          saving: false
         })
       } else {
         setDoctorReviewModal(prev => ({ ...prev, loading: false }))
@@ -191,8 +206,8 @@ export default function Screening() {
     }
   }
 
-  // Doctor: Mark Patient Review as Complete (removes from active priority queue)
-  const handleMarkPatientComplete = async (patientId) => {
+  // Doctor: Save Clinical Evaluation, Notes & Optionally Mark Review Complete
+  const handleMarkPatientComplete = async (patientId, markComplete = true) => {
     if (!patientId) return
     setCompletingPatientId(patientId)
     const token = localStorage.getItem('dr_token')
@@ -202,28 +217,73 @@ export default function Screening() {
     try {
       const res = await fetch(`/api/patients/${encodeURIComponent(patientId.toLowerCase())}/complete`, {
         method: 'POST',
-        headers
+        headers,
+        body: JSON.stringify({
+          doctorNotes: doctorReviewModal.doctorNotes,
+          doctorGrade: doctorReviewModal.doctorGrade,
+          markComplete
+        })
       })
       if (res.ok) {
-        // If viewing active priority queue ('pending'), immediately remove from queue
-        if (doctorQueueMode === 'pending') {
-          setPatientsQueue(prev => prev.filter(p => p.id.toLowerCase() !== patientId.toLowerCase()))
-        } else {
-          setPatientsQueue(prev => prev.map(p => p.id.toLowerCase() === patientId.toLowerCase() ? { ...p, review_status: 'completed' } : p))
-        }
+        const data = await res.json()
+        const updated = data.patient || {}
 
-        // Update modal state if open
-        if (doctorReviewModal.isOpen && doctorReviewModal.patient?.id.toLowerCase() === patientId.toLowerCase()) {
+        if (markComplete) {
+          // If viewing active priority queue ('pending'), immediately remove from queue
+          if (doctorQueueMode === 'pending') {
+            setPatientsQueue(prev => prev.filter(p => p.id.toLowerCase() !== patientId.toLowerCase()))
+          } else {
+            setPatientsQueue(prev => prev.map(p => p.id.toLowerCase() === patientId.toLowerCase() ? {
+              ...p,
+              review_status: 'completed',
+              doctor_notes: updated.doctor_notes || doctorReviewModal.doctorNotes,
+              doctor_grade: updated.doctor_grade || doctorReviewModal.doctorGrade,
+              severity_level: updated.severity_level || p.severity_level
+            } : p))
+          }
+
+          // Close modal on complete
+          if (doctorReviewModal.isOpen && doctorReviewModal.patient?.id.toLowerCase() === patientId.toLowerCase()) {
+            setDoctorReviewModal(prev => ({
+              ...prev,
+              isOpen: false,
+              patient: {
+                ...prev.patient,
+                review_status: 'completed',
+                doctor_notes: updated.doctor_notes || prev.doctorNotes,
+                doctor_grade: updated.doctor_grade || prev.doctorGrade
+              }
+            }))
+          }
+
+          setSyncStatus({
+            type: 'success',
+            message: `Review completed and archived for Patient ${patientId} (Confirmed: ${doctorReviewModal.doctorGrade}).`
+          })
+        } else {
+          // Draft save without closing modal
+          setPatientsQueue(prev => prev.map(p => p.id.toLowerCase() === patientId.toLowerCase() ? {
+            ...p,
+            doctor_notes: updated.doctor_notes || doctorReviewModal.doctorNotes,
+            doctor_grade: updated.doctor_grade || doctorReviewModal.doctorGrade,
+            severity_level: updated.severity_level || p.severity_level
+          } : p))
+
           setDoctorReviewModal(prev => ({
             ...prev,
-            patient: { ...prev.patient, review_status: 'completed' }
+            patient: {
+              ...prev.patient,
+              doctor_notes: updated.doctor_notes || prev.doctorNotes,
+              doctor_grade: updated.doctor_grade || prev.doctorGrade,
+              severity_level: updated.severity_level || prev.patient?.severity_level
+            }
           }))
-        }
 
-        setSyncStatus({
-          type: 'success',
-          message: `Patient ${patientId} review marked as complete and removed from active priority queue.`
-        })
+          setSyncStatus({
+            type: 'success',
+            message: `Doctor clinical notes and staging evaluation saved for Patient ${patientId}.`
+          })
+        }
 
         // Refresh live data in background
         fetchLiveRoleData()
@@ -1062,8 +1122,17 @@ export default function Screening() {
                             {p.referable_flag ? 'DR Present' : 'No DR Detected'}
                           </span>
                           <span style={{ fontSize: '0.73rem', color: '#475569', display: 'block', marginTop: '2px' }}>
-                            {p.primary_icdr_grade || 'ICDR Staged'}
+                            {p.doctor_grade ? (
+                              <strong style={{ color: '#0f766e' }}>✓ {p.doctor_grade}</strong>
+                            ) : (
+                              p.primary_icdr_grade || 'ICDR Staged'
+                            )}
                           </span>
+                          {p.doctor_notes && (
+                            <span style={{ fontSize: '0.68rem', color: '#64748b', fontStyle: 'italic', display: 'block', marginTop: '2px' }}>
+                              "{p.doctor_notes.length > 40 ? p.doctor_notes.slice(0, 40) + '…' : p.doctor_notes}"
+                            </span>
+                          )}
                         </td>
 
                         {/* Review Status */}
@@ -1228,6 +1297,25 @@ export default function Screening() {
                     ? 'Clinical signs indicative of diabetic microvascular changes were observed. An in-person consultation with an eye care specialist is recommended for formal dilated fundus examination.'
                     : 'Your retinal microvasculature appears within normal screening thresholds. Regular annual retinal checkups and blood sugar management are recommended.'}
                 </p>
+
+                {/* Specialist Doctor Evaluation Banner */}
+                {patientScreenings.some(s => s.doctor_notes || s.doctor_grade) && (
+                  <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 6, padding: '0.85rem 1rem', marginTop: '0.85rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <span style={{ background: '#166534', color: '#ffffff', fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase' }}>
+                        Specialist Confirmed Evaluation
+                      </span>
+                      <strong style={{ fontSize: '0.9rem', color: '#14532d' }}>
+                        {patientScreenings.find(s => s.doctor_grade)?.doctor_grade || 'Clinical Staging Complete'}
+                      </strong>
+                    </div>
+                    {patientScreenings.find(s => s.doctor_notes)?.doctor_notes && (
+                      <div style={{ fontSize: '0.8rem', color: '#166534', marginTop: '4px', fontStyle: 'italic', background: '#ffffff', padding: '0.65rem 0.85rem', borderRadius: 4, border: '1px solid #bbf7d0' }}>
+                        Doctor Notes: "{patientScreenings.find(s => s.doctor_notes).doctor_notes}"
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <h3 style={{ fontSize: '0.88rem', fontWeight: 600, color: '#334155', margin: '0.5rem 0 0 0' }}>
@@ -1250,6 +1338,16 @@ export default function Screening() {
                       <div style={{ fontSize: '0.76rem', color: scr.referable ? '#b91c1c' : '#15803d', fontWeight: 600, marginTop: '4px' }}>
                         Result: {scr.prediction}
                       </div>
+                      {scr.doctor_grade && (
+                        <div style={{ fontSize: '0.74rem', color: '#0f766e', fontWeight: 700, marginTop: '3px' }}>
+                          Confirmed: {scr.doctor_grade}
+                        </div>
+                      )}
+                      {scr.doctor_notes && (
+                        <div style={{ fontSize: '0.71rem', color: '#334155', fontStyle: 'italic', marginTop: '3px', background: '#f8fafc', padding: '3px 6px', borderRadius: 3, border: '1px solid #e2e8f0' }}>
+                          Doctor: "{scr.doctor_notes}"
+                        </div>
+                      )}
                       <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '4px' }}>
                         Screened on: {new Date(scr.created_at).toLocaleDateString()}
                       </div>
@@ -1523,6 +1621,11 @@ export default function Screening() {
                           <div style={{ fontSize: '0.71rem', color: '#475569', marginTop: '2px' }}>
                             Softmax: <strong>{rec.dr_softmax !== null && rec.dr_softmax !== undefined ? `${(rec.dr_softmax * 100).toFixed(1)}%` : 'N/A'}</strong> • {rec.icdr_grade || 'Evaluated'}
                           </div>
+                          {rec.doctor_grade && (
+                            <div style={{ fontSize: '0.70rem', color: '#0369a1', fontWeight: 600, marginTop: '2px' }}>
+                              ✓ Dr: {rec.doctor_grade}
+                            </div>
+                          )}
                         </td>
 
                         {/* Severity Badge */}
@@ -2006,7 +2109,7 @@ export default function Screening() {
                   </code>
                 </div>
                 <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '3px' }}>
-                  Contact: {doctorReviewModal.patient.phone} • Registered: {new Date(doctorReviewModal.patient.created_at || Date.now()).toLocaleDateString()}
+                  Contact: {doctorReviewModal.patient.phone} • Registered: {doctorReviewModal.patient.created_at ? new Date(doctorReviewModal.patient.created_at).toLocaleDateString() : 'Active Clinic Record'}
                 </div>
               </div>
 
@@ -2196,17 +2299,162 @@ export default function Screening() {
                   })}
                 </div>
               )}
+
+              {/* ========================================================================= */}
+              {/* OPHTHALMOLOGIST CLINICAL STAGING OVERRIDE & CONSULTATION NOTES SECTION    */}
+              {/* ========================================================================= */}
+              <div style={{ marginTop: '1.75rem', padding: '1.25rem', background: '#f8fafc', border: '1.5px solid #cbd5e1', borderRadius: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.65rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ background: '#0f766e', color: '#ffffff', fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase' }}>
+                      Ophthalmologist Clinical Evaluation
+                    </span>
+                    <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 700, color: '#0f172a' }}>
+                      Confirmed ICDR Staging Override &amp; Consultation Remarks
+                    </h4>
+                  </div>
+                  {doctorReviewModal.patient?.doctor_grade && (
+                    <span style={{ fontSize: '0.74rem', color: '#166534', background: '#f0fdf4', padding: '2px 8px', borderRadius: 4, border: '1px solid #86efac', fontWeight: 600 }}>
+                      ✓ Staged by Specialist
+                    </span>
+                  )}
+                </div>
+
+                {/* Staging Override Selector */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: '#1e293b', marginBottom: '0.45rem' }}>
+                    Confirmed ICDR Clinical Staging:
+                    <span style={{ fontSize: '0.76rem', color: '#64748b', fontWeight: 400, marginLeft: '6px' }}>
+                      (Select to confirm or override the automated baseline staging)
+                    </span>
+                  </label>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.55rem' }}>
+                    {[
+                      { grade: 'No Apparent Retinopathy (Stage 0)', desc: 'No microvascular abnormalities; fundus within normal limits.', sev: 'LOW' },
+                      { grade: 'Mild Nonproliferative DR (Stage 1)', desc: 'Microaneurysms only; no macular threat detected.', sev: 'LOW' },
+                      { grade: 'Moderate Nonproliferative DR (Stage 2)', desc: 'Microaneurysms, blot hemorrhages, hard exudates, or CWS.', sev: 'MEDIUM' },
+                      { grade: 'Severe Nonproliferative DR (Stage 3)', desc: '4:2:1 Rule: severe hemorrhages in 4 quadrants or venous beading.', sev: 'HIGH' },
+                      { grade: 'Proliferative Diabetic Retinopathy (Stage 4)', desc: 'Neovascularization of disc/elsewhere or preretinal vitreous hemorrhage.', sev: 'HIGH' }
+                    ].map((opt) => {
+                      const isSelected = doctorReviewModal.doctorGrade === opt.grade
+                      const isAiBaseline = (doctorReviewModal.patient?.primary_icdr_grade || '').toLowerCase().includes(opt.grade.toLowerCase().slice(0, 15))
+                      return (
+                        <div
+                          key={opt.grade}
+                          onClick={() => setDoctorReviewModal(prev => ({ ...prev, doctorGrade: opt.grade }))}
+                          style={{
+                            padding: '0.7rem 0.85rem',
+                            borderRadius: 6,
+                            border: isSelected ? '2px solid #0f766e' : '1px solid #cbd5e1',
+                            background: isSelected ? '#f0fdf4' : '#ffffff',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.8rem', color: isSelected ? '#0f766e' : '#0f172a' }}>
+                              {opt.grade}
+                            </span>
+                            {isAiBaseline && (
+                              <span style={{ fontSize: '0.66rem', background: '#f1f5f9', color: '#475569', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>
+                                AI Staging
+                              </span>
+                            )}
+                          </div>
+                          <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#64748b', lineHeight: 1.3 }}>
+                            {opt.desc}
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Clinical Notes & Diagnostic Remarks */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1e293b' }}>
+                      Ophthalmologist Diagnostic Remarks, Recall Interval &amp; Referral Plan:
+                    </label>
+                    <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                      Recorded in patient health portal &amp; master clinic registry
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={3}
+                    value={doctorReviewModal.doctorNotes || ''}
+                    onChange={(e) => setDoctorReviewModal(prev => ({ ...prev, doctorNotes: e.target.value }))}
+                    placeholder="e.g. Confirmed Moderate NPDR in OS. Dot hemorrhages and lipid exudate ring noted temporal to fovea. Macular OCT ordered within 4-6 weeks. Strict glycemic control reinforced (HbA1c target < 7.0%)."
+                    style={{
+                      width: '100%',
+                      padding: '0.65rem 0.85rem',
+                      borderRadius: 5,
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.84rem',
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      boxSizing: 'border-box',
+                      background: '#ffffff',
+                      outline: 'none',
+                      lineHeight: 1.45
+                    }}
+                  />
+
+                  {/* Clinical Quick Remark Insertion Chips */}
+                  <div style={{ marginTop: '0.55rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Quick Templates:</span>
+                    {[
+                      '+ 12-Month Annual Routine Eye Screening',
+                      '+ Dilated Fundus Exam & OCT Scan in 4-6 Wks',
+                      '+ Strict Glycemic & BP Control (HbA1c < 7%)',
+                      '+ Urgent Vitreoretinal Surgery / Anti-VEGF Referral',
+                      '+ Suspected Macular Edema (DME) — Clinical Correlation Required'
+                    ].map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => {
+                          setDoctorReviewModal(prev => {
+                            const text = chip.replace(/^\+\s*/, '')
+                            const updated = prev.doctorNotes ? `${prev.doctorNotes.trim()} ${text}.` : `${text}.`
+                            return { ...prev, doctorNotes: updated }
+                          })
+                        }}
+                        style={{
+                          fontSize: '0.7rem',
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          background: '#ffffff',
+                          border: '1px solid #cbd5e1',
+                          color: '#334155',
+                          cursor: 'pointer',
+                          fontWeight: 500
+                        }}
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Modal Actions Footer */}
             <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0', padding: '0.95rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
               <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                Marking review complete archives this case and makes it <strong>not visible in the active priority queue</strong>.
+                {doctorReviewModal.patient?.review_status === 'completed'
+                  ? 'Review completed. You may update clinical notes or staging at any time.'
+                  : 'Saving records clinical staging & notes. Marking complete removes the case from active queue.'}
               </div>
               <div style={{ display: 'flex', gap: '0.65rem' }}>
                 <button
                   type="button"
-                  onClick={() => setDoctorReviewModal({ isOpen: false, patient: null, images: [], loading: false })}
+                  onClick={() => setDoctorReviewModal({ isOpen: false, patient: null, images: [], loading: false, doctorNotes: '', doctorGrade: '', saving: false })}
                   style={{
                     background: '#ffffff',
                     color: '#334155',
@@ -2217,35 +2465,50 @@ export default function Screening() {
                     cursor: 'pointer'
                   }}
                 >
-                  Close Review
+                  Close
                 </button>
 
-                {doctorReviewModal.patient?.review_status !== 'completed' ? (
-                  <button
-                    type="button"
-                    disabled={completingPatientId === doctorReviewModal.patient.id}
-                    onClick={async () => {
-                      await handleMarkPatientComplete(doctorReviewModal.patient.id)
-                      setDoctorReviewModal(prev => ({ ...prev, isOpen: false }))
-                    }}
-                    style={{
-                      background: '#15803d',
-                      color: '#ffffff',
-                      border: '1px solid #166534',
-                      borderRadius: 4,
-                      padding: '0.45rem 1.15rem',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      cursor: completingPatientId === doctorReviewModal.patient.id ? 'not-allowed' : 'pointer'
-                    }}
-                  >
-                    {completingPatientId === doctorReviewModal.patient.id ? 'Completing…' : '✓ Mark as Complete & Remove from Queue'}
-                  </button>
-                ) : (
-                  <span style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600, padding: '0.45rem 0.75rem' }}>
-                    ✓ Review Completed
-                  </span>
-                )}
+                {/* Save Draft Button */}
+                <button
+                  type="button"
+                  disabled={completingPatientId === doctorReviewModal.patient?.id}
+                  onClick={() => handleMarkPatientComplete(doctorReviewModal.patient.id, false)}
+                  style={{
+                    background: '#ffffff',
+                    color: '#0f766e',
+                    border: '1px solid #0f766e',
+                    borderRadius: 4,
+                    padding: '0.45rem 1rem',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: completingPatientId === doctorReviewModal.patient?.id ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {completingPatientId === doctorReviewModal.patient?.id ? 'Saving…' : 'Save Notes & Staging'}
+                </button>
+
+                {/* Confirm Staging & Complete Review Button */}
+                <button
+                  type="button"
+                  disabled={completingPatientId === doctorReviewModal.patient?.id}
+                  onClick={() => handleMarkPatientComplete(doctorReviewModal.patient.id, true)}
+                  style={{
+                    background: '#15803d',
+                    color: '#ffffff',
+                    border: '1px solid #166534',
+                    borderRadius: 4,
+                    padding: '0.45rem 1.15rem',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: completingPatientId === doctorReviewModal.patient?.id ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {completingPatientId === doctorReviewModal.patient?.id
+                    ? 'Updating…'
+                    : doctorReviewModal.patient?.review_status === 'completed'
+                    ? '✓ Update Completed Review'
+                    : '✓ Confirm Staging & Complete Review'}
+                </button>
               </div>
             </div>
           </div>
@@ -2316,6 +2579,24 @@ export default function Screening() {
                 <tr><td>DR Softmax Score:</td><td>{inspectModal.record.dr_softmax !== null ? `${(inspectModal.record.dr_softmax * 100).toFixed(1)}%` : 'N/A'}</td></tr>
                 <tr><td>Severity Level:</td><td><strong style={{ color: inspectModal.record.severity_level === 'HIGH' ? '#b91c1c' : '#15803d' }}>{inspectModal.record.severity_level || 'LOW'}</strong></td></tr>
                 <tr><td>Review Status:</td><td>{inspectModal.record.review_status || 'pending'}</td></tr>
+                {inspectModal.record.doctor_grade && (
+                  <tr>
+                    <td>Doctor Staging:</td>
+                    <td>
+                      <span style={{ fontWeight: 700, color: '#0369a1' }}>
+                        ✓ {inspectModal.record.doctor_grade}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {inspectModal.record.doctor_notes && (
+                  <tr>
+                    <td>Doctor Clinical Notes:</td>
+                    <td style={{ whiteSpace: 'pre-wrap', color: '#1e293b', background: '#f8fafc', padding: '6px 8px', borderRadius: 4, border: '1px solid #e2e8f0', lineHeight: 1.4 }}>
+                      {inspectModal.record.doctor_notes}
+                    </td>
+                  </tr>
+                )}
                 <tr><td>Screened Timestamp:</td><td>{new Date(inspectModal.record.created_at).toLocaleString()}</td></tr>
               </tbody>
             </table>
