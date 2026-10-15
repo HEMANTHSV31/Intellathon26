@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
-import { translations, translateText } from '../utils/translations'
+import { translationsByLang, translateText } from '../utils/translations'
 
 const LanguageContext = createContext()
 
@@ -8,25 +8,30 @@ const LanguageContext = createContext()
 const originalTextMap = new WeakMap()
 const originalPlaceholderMap = new WeakMap()
 
-// Pre-sorted entries by length descending so longer sentences match before individual words
-const sortedEntries = Object.entries(translations).sort((a, b) => b[0].length - a[0].length)
+// Pre-sorted entries by length descending per language so longer sentences match before individual words
+const sortedEntriesByLang = {}
+for (const [lang, dict] of Object.entries(translationsByLang)) {
+  sortedEntriesByLang[lang] = Object.entries(dict).sort((a, b) => b[0].length - a[0].length)
+}
 
 function translateDom(targetLang) {
   if (typeof document === 'undefined') return
 
+  const sortedEntries = sortedEntriesByLang[targetLang] || []
+
   // 1. Translate Placeholders
   const inputs = document.querySelectorAll('input[placeholder], textarea[placeholder]')
   inputs.forEach((el) => {
-    if (targetLang === 'ta') {
+    if (targetLang !== 'en' && sortedEntries.length > 0) {
       if (!originalPlaceholderMap.has(el)) {
         originalPlaceholderMap.set(el, el.getAttribute('placeholder'))
       }
       const orig = originalPlaceholderMap.get(el)
       if (orig) {
         let translated = orig
-        for (const [en, ta] of sortedEntries) {
+        for (const [en, trans] of sortedEntries) {
           if (translated.includes(en)) {
-            translated = translated.replaceAll(en, ta)
+            translated = translated.replaceAll(en, trans)
           }
         }
         el.setAttribute('placeholder', translated)
@@ -61,7 +66,7 @@ function translateDom(targetLang) {
 
   let node
   while ((node = walker.nextNode())) {
-    if (targetLang === 'ta') {
+    if (targetLang !== 'en' && sortedEntries.length > 0) {
       const currentVal = node.nodeValue
       if (!originalTextMap.has(node)) {
         originalTextMap.set(node, currentVal)
@@ -71,13 +76,14 @@ function translateDom(targetLang) {
 
       // Direct exact match
       const trimmed = baseVal.trim()
-      if (translations[trimmed]) {
-        translatedVal = baseVal.replace(trimmed, translations[trimmed])
+      const langDict = translationsByLang[targetLang]
+      if (langDict && langDict[trimmed]) {
+        translatedVal = baseVal.replace(trimmed, langDict[trimmed])
       } else {
         // Multi-phrase substring match
-        for (const [en, ta] of sortedEntries) {
+        for (const [en, trans] of sortedEntries) {
           if (translatedVal.includes(en)) {
-            translatedVal = translatedVal.replaceAll(en, ta)
+            translatedVal = translatedVal.replaceAll(en, trans)
           }
         }
       }
@@ -129,14 +135,14 @@ export function LanguageProvider({ children }) {
       isTranslatingRef.current = false
     }
 
-    // Run immediately and after a short paint cycle
+    // Run immediately and after paint cycles
     run()
     const timer = setTimeout(run, 60)
     const secondTimer = setTimeout(run, 250)
 
     // Mutation observer for dynamic content (modal popups, screening results, etc.)
     let observer
-    if (language === 'ta') {
+    if (language !== 'en') {
       let timeoutId
       observer = new MutationObserver(() => {
         clearTimeout(timeoutId)

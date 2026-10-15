@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import { useLanguage } from '../context/LanguageContext'
 
-const LANGUAGES = [
+export const LANGUAGES = [
   { code: 'en', label: 'English' },
-  { code: 'ta', label: 'தமிழ் (Tamil)' }
+  { code: 'hi', label: 'हिन्दी (Hindi)' },
+  { code: 'ta', label: 'தமிழ் (Tamil)' },
+  { code: 'kn', label: 'ಕನ್ನಡ (Kannada)' },
+  { code: 'mr', label: 'मराठी (Marathi)' },
+  { code: 'te', label: 'తెలుగు (Telugu)' },
+  { code: 'ml', label: 'മലയാളം (Malayalam)' },
+  { code: 'bn', label: 'বাংলা (Bengali)' },
+  { code: 'gu', label: 'ગુજરાતી (Gujarati)' }
 ]
 
 function getCookie(name) {
@@ -12,14 +19,23 @@ function getCookie(name) {
 }
 
 export default function LanguageSelector() {
-  const { language, setLanguage } = useLanguage()
+  const { setLanguage } = useLanguage()
   const [selectedLang, setSelectedLang] = useState('en')
 
   useEffect(() => {
     const googTrans = getCookie('googtrans')
-    if (googTrans && googTrans.includes('/ta')) {
-      setSelectedLang('ta')
-      setLanguage('ta')
+    if (googTrans) {
+      const match = googTrans.match(/\/en\/([a-z]{2})/)
+      if (match && LANGUAGES.some(l => l.code === match[1])) {
+        setSelectedLang(match[1])
+        setLanguage(match[1])
+        return
+      }
+    }
+    const saved = localStorage.getItem('preferred_language') || 'en'
+    if (LANGUAGES.some(l => l.code === saved)) {
+      setSelectedLang(saved)
+      setLanguage(saved)
     } else {
       setSelectedLang('en')
       setLanguage('en')
@@ -89,7 +105,7 @@ export default function LanguageSelector() {
         <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
       </svg>
 
-      {/* Language Select Dropdown (English & Tamil only) */}
+      {/* Language Select Dropdown */}
       <select
         aria-label="Select Language"
         value={selectedLang}
