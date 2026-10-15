@@ -3531,25 +3531,34 @@ let tf = typeof window !== "undefined" ? window.tf : null;
         });
 
         // Also push directly to Supabase if reachable
+        let syncedToSupabase = false;
         try {
           const token = localStorage.getItem('dr_token');
           const hdrs = { 'Content-Type': 'application/json' };
           if (token) hdrs['Authorization'] = `Bearer ${token}`;
-          await fetch('/api/screenings/upload', {
+          const supaRes = await fetch('/api/screenings/upload', {
             method: 'POST',
             headers: hdrs,
             body: JSON.stringify({
               id: 'scr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
               ...screeningRecord,
+              prediction: screeningRecord.drPrediction,
+              confidence: screeningRecord.drConfidence,
+              drScore: screeningRecord.drScore,
               imageData: working.toDataURL("image/jpeg", 0.85)
             })
           });
+          if (supaRes.ok) {
+            syncedToSupabase = true;
+          }
         } catch (supaErr) {
           console.log('[Supabase sync] Saved to local queue, will sync when online:', supaErr.message);
         }
       } catch (saveRecErr) {
         console.warn("Could not persist screening report or image to IndexedDB:", saveRecErr);
       }
+
+      return { success: true, syncedToSupabase: !!syncedToSupabase, state };
 
     } catch(err){
       console.error(err);

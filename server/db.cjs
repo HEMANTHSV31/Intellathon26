@@ -1,8 +1,3 @@
-require('dotenv').config();
-const dns = require('dns');
-if (dns.setDefaultResultOrder) {
-  dns.setDefaultResultOrder('verbatim');
-}
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +8,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000
+  connectionTimeoutMillis: 15000
 });
 
 // Gracefully handle idle client errors (like transient cloud ECONNRESET) to prevent Node process termination

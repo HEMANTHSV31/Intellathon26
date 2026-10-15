@@ -17,7 +17,12 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Initialize DB schema
-initDb();
+// Sanitize and validate UUID strings to protect PostgreSQL against invalid type cast errors
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function toValidUuid(val) {
+  if (!val || typeof val !== 'string') return null;
+  return UUID_REGEX.test(val.trim()) ? val.trim() : null;
+}
 
 // Middleware: Authenticate JWT
 function authenticateToken(req, res, next) {
@@ -370,6 +375,9 @@ app.get('/api/stats', async (req, res) => {
   } catch (err) {
     console.error('Fetch stats error:', err);
     return res.status(500).json({ error: 'Failed to retrieve stats' });
+  }
+});
+
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
@@ -671,7 +679,7 @@ app.post('/api/patients/intake', optionalAuthenticateToken, async (req, res) => 
     }
 
     const patientId = `${cleanName || 'patient'}_${cleanPhone}`.toLowerCase();
-    const operatorId = req.user ? req.user.id : null;
+    const operatorId = toValidUuid(req.user?.id);
 
     const upsertPatientQuery = `
       INSERT INTO patients (id, name, phone, operator_id, created_at, updated_at)
@@ -763,7 +771,7 @@ app.post('/api/patients/:id/complete', optionalAuthenticateToken, async (req, re
     }
 
     const patientId = rawId.trim().toLowerCase();
-    const doctorUserId = req.user ? req.user.id : null;
+    const doctorUserId = toValidUuid(req.user?.id);
 
     const patientUpdate = await query(
       `UPDATE patients
@@ -827,8 +835,8 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
       return res.status(400).json({ error: 'Screening ID is required' });
     }
 
-    const userId = req.user ? req.user.id : null;
-    const operatorId = req.user?.role === 'operator' ? req.user.id : (userId || null);
+    const userId = toValidUuid(req.user?.id);
+    const operatorId = req.user?.role === 'operator' ? userId : null;
     const createdAt = timestamp ? new Date(timestamp) : new Date();
 
     // 1. Run Automated Backend Screening on the server
@@ -854,28 +862,40 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
     const finalRecommendations = backendAnalysis?.recommendations || recommendations || [];
     const finalLesionCounts = backendAnalysis?.lesionCounts || lesionCounts || { microaneurysms: 0, hemorrhages: 0, hardExudates: 0, cottonWoolSpots: 0 };
 
-    // 2. Normalize patient identifier to lowercase
-    let finalPatientId = patientId ? patientId.toLowerCase() : null;
-    if (patientName && patientPhone) {
-      const cleanName = patientName.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-      const cleanPhone = patientPhone.trim().replace(/\D/g, '');
-      finalPatientId = finalPatientId || `${cleanName || 'patient'}_${cleanPhone}`.toLowerCase();
+    // 2. Normalize patient identifier and guarantee registration in patients table
+    let finalPatientId = patientId ? patientId.trim().toLowerCase() : null;
+    let finalPatientName = (patientName || '').trim();
+    let finalPatientPhone = (patientPhone || '').trim().replace(/\D/g, '');
 
+    // If patientName or phone is empty but patientId has [name]_[phone] format, extract them
+    if (!finalPatientName && finalPatientId && finalPatientId.includes('_')) {
+      const parts = finalPatientId.split('_');
+      finalPatientName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+      if (!finalPatientPhone) finalPatientPhone = parts[1];
+    }
+
+    if (finalPatientName && finalPatientPhone && !finalPatientId) {
+      const cleanName = finalPatientName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      finalPatientId = `${cleanName || 'patient'}_${finalPatientPhone}`.toLowerCase();
+    }
+
+    // Always ensure a patient record exists in the patients table
+    if (finalPatientId) {
       try {
         await query(`
           INSERT INTO patients (id, name, phone, operator_id, severity_level, review_status, created_at, updated_at)
           VALUES ($1, $2, $3, $4, $5, 'pending', NOW(), NOW())
           ON CONFLICT (id) DO UPDATE SET
-            name = EXCLUDED.name,
-            phone = EXCLUDED.phone,
+            name = COALESCE(NULLIF(EXCLUDED.name, ''), patients.name),
+            phone = COALESCE(NULLIF(EXCLUDED.phone, ''), patients.phone),
             severity_level = CASE
               WHEN UPPER(EXCLUDED.severity_level) = 'HIGH' OR UPPER(patients.severity_level) = 'HIGH' THEN 'HIGH'
               WHEN UPPER(EXCLUDED.severity_level) = 'MEDIUM' OR UPPER(patients.severity_level) = 'MEDIUM' THEN 'MEDIUM'
-              ELSE 'LOW'
+              ELSE COALESCE(patients.severity_level, 'LOW')
             END,
             review_status = 'pending',
             updated_at = NOW();
-        `, [finalPatientId, patientName.trim(), cleanPhone, operatorId, finalSeverity]);
+        `, [finalPatientId, finalPatientName || finalPatientId, finalPatientPhone || null, operatorId, finalSeverity]);
       } catch (pErr) {
         console.warn('Patient auto-sync notice:', pErr.message);
       }
@@ -915,16 +935,16 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
       id,
       userId,
       finalPatientId,
-      patientName || null,
-      patientPhone || null,
+      finalPatientName || null,
+      finalPatientPhone || null,
       eye || null,
       operatorId,
       fileName || 'Fundus Image',
       imageData || null,
       finalPrediction,
-      finalConfidence,
-      finalDrScore,
-      finalDrSoftmax,
+      parseFloat(finalConfidence) || 0.95,
+      parseFloat(finalDrScore) || 0.5,
+      parseFloat(finalDrSoftmax) || 0.5,
       finalIcdrGrade,
       finalSeverity,
       finalReferable,

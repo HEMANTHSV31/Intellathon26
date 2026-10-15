@@ -14,6 +14,7 @@ export default function Screening() {
   const [sessionRejectedCount, setSessionRejectedCount] = useState(0)
   const [activeScreeningId, setActiveScreeningId] = useState(null)
   const [isValidating, setIsValidating] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
   const [syncStatus, setSyncStatus] = useState(null)
   const [showPipelineDetails, setShowPipelineDetails] = useState(true)
 
@@ -61,6 +62,26 @@ export default function Screening() {
 
   // Accurate live count of quality passed images in current operator session
   const sessionQualityPassedCount = acceptedImages.filter(img => img.verdict !== 'reject').length
+
+  // Dynamically synchronize accepted images with current patient intake credentials
+  useEffect(() => {
+    setAcceptedImages(prev => {
+      let changed = false
+      const updated = prev.map(item => {
+        if (item.patientId !== currentPatientId.toLowerCase() || item.patientName !== patientName.trim() || item.patientPhone !== cleanPhone) {
+          changed = true
+          return {
+            ...item,
+            patientId: currentPatientId.toLowerCase(),
+            patientName: patientName.trim(),
+            patientPhone: cleanPhone
+          }
+        }
+        return item
+      })
+      return changed ? updated : prev
+    })
+  }, [currentPatientId, patientName, cleanPhone])
 
   useEffect(() => {
     const cleanup = initScreening()
@@ -121,6 +142,15 @@ export default function Screening() {
           const sData = await statsRes.json()
           setAdminStats(sData)
         }
+        if (pRes.ok) {
+          const pData = await pRes.json()
+          setPatientsQueue(pData.patients || [])
+        }
+      } else if (activeRole === 'operator') {
+        const [pRes, sRes] = await Promise.all([
+          fetch('/api/patients?status=all', { headers }),
+          fetch('/api/screenings', { headers })
+        ])
         if (pRes.ok) {
           const pData = await pRes.json()
           setPatientsQueue(pData.patients || [])
@@ -239,22 +269,14 @@ export default function Screening() {
     }
   }
 
-  // Handle Multi-Image Upload with Real-Time Quality Gate & Automated Backend Screening
+  // Handle Multi-Image Selection with Real-Time Quality Gate (Staging for Upload)
   const handleFilesUpload = async (filesList) => {
     if (!filesList || filesList.length === 0) return
-
-    if (!cleanPhone) {
-      alert('Please enter a valid Patient Phone Number with numeric digits. Patient ID is formatted as [name]_[digits] in lowercase.')
-      return
-    }
 
     setIsValidating(true)
     const filesArray = Array.from(filesList)
     const newAccepted = []
     const rejectedList = []
-    const token = localStorage.getItem('dr_token')
-    const headers = { 'Content-Type': 'application/json' }
-    if (token) headers['Authorization'] = `Bearer ${token}`
 
     for (const file of filesArray) {
       try {
@@ -287,8 +309,8 @@ export default function Screening() {
             patientName: patientName.trim(),
             patientPhone: cleanPhone,
             timestamp: new Date().toLocaleTimeString(),
-            screeningStatus: 'Running automated screening in backend service…',
-            prediction: 'Analyzing on server…',
+            screeningStatus: 'Quality Passed — Ready for Supabase Upload',
+            prediction: 'Pending Upload',
             drSoftmax: null,
             severityLevel: 'PENDING',
             lesionCounts: null,
@@ -296,49 +318,6 @@ export default function Screening() {
             referable: false
           }
           newAccepted.push(itemObj)
-
-          // Run Automated Screening on the Backend Service
-          fetch('/api/screenings/upload', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              id: imgId,
-              patientId: currentPatientId.toLowerCase(),
-              patientName: patientName.trim(),
-              patientPhone: cleanPhone,
-              eye,
-              fileName: file.name,
-              imageData: res.thumbnail,
-              qualityVerdict: res.verdict,
-              timestamp: Date.now()
-            })
-          })
-          .then(async (upRes) => {
-            if (upRes.ok) {
-              const upData = await upRes.json()
-              const analysis = upData.analysis || {}
-              setAcceptedImages(prev => prev.map(img => {
-                if (img.id === imgId) {
-                  return {
-                    ...img,
-                    screeningStatus: 'Backend Screening Complete',
-                    prediction: analysis.prediction || 'Screening Complete',
-                    drSoftmax: analysis.drSoftmax,
-                    severityLevel: analysis.severityLevel || 'LOW',
-                    icdrGrade: analysis.icdrGrade,
-                    lesionCounts: analysis.lesionCounts,
-                    referable: analysis.referable
-                  }
-                }
-                return img
-              }))
-              // Auto-refresh doctor priority queue and admin stats
-              fetchLiveRoleData()
-            }
-          })
-          .catch(err => {
-            console.warn('Backend screening upload notice:', err)
-          })
         }
       } catch (err) {
         rejectedList.push({
@@ -359,12 +338,12 @@ export default function Screening() {
       })
     }
 
-    // Add accepted images
+    // Add accepted images to staging
     if (newAccepted.length > 0) {
       setAcceptedImages(prev => [...prev, ...newAccepted])
       setSyncStatus({
         type: 'info',
-        message: `${newAccepted.length} image(s) passed quality gate and submitted to backend screening engine. Quality passed count: ${sessionQualityPassedCount + newAccepted.length}`
+        message: `${newAccepted.length} fundus photograph(s) passed quality gate. Click "Upload to Supabase Database" below to store in clinical registry.`
       })
     }
 
@@ -388,20 +367,27 @@ export default function Screening() {
     )
 
     try {
-      await runPipelineWithMeta(imageItem.file, {
-        patientId: imageItem.patientId.toLowerCase(),
-        patientName: imageItem.patientName,
-        patientPhone: imageItem.patientPhone,
+      const runRes = await runPipelineWithMeta(imageItem.file, {
+        patientId: currentPatientId.toLowerCase(),
+        patientName: patientName.trim(),
+        patientPhone: cleanPhone,
         eye: imageItem.eye
       })
 
+      const isSynced = runRes?.syncedToSupabase
+
       setAcceptedImages(prev =>
-        prev.map(item => item.id === imageItem.id ? { ...item, screeningStatus: 'Screening complete (Synced to Supabase)' } : item)
+        prev.map(item => item.id === imageItem.id ? {
+          ...item,
+          screeningStatus: isSynced ? 'Screening complete (Verified in Supabase)' : 'Screening complete (Offline queued)'
+        } : item)
       )
 
       setSyncStatus({
-        type: 'success',
-        message: `Analysis completed for ${imageItem.name}. Diagnostic results recorded under Patient ID: ${imageItem.patientId}.`
+        type: isSynced ? 'success' : 'info',
+        message: isSynced
+          ? `Analysis completed for ${imageItem.name}. Diagnostic results verified in Supabase under Patient ID: ${currentPatientId}.`
+          : `Analysis completed for ${imageItem.name}. Saved locally in offline queue (will sync when server is reachable).`
       })
 
       // Refresh live records
@@ -416,70 +402,136 @@ export default function Screening() {
     }
   }
 
-  // Sync all accepted images and patient intake directly to Supabase
-  const handleSyncToSupabase = async () => {
-    if (!cleanPhone) {
-      alert('Patient phone number is required.')
+  // Primary Operator Action: Upload Patient Intake & All Quality-Passed Images to Supabase Database
+  const handleUploadToSupabase = async () => {
+    if (!patientName.trim()) {
+      alert('Patient full name is required.')
       return
     }
 
-    setSyncStatus({ type: 'syncing', message: 'Synchronizing patient record and fundus images with Supabase…' })
+    if (!cleanPhone) {
+      alert('Valid patient phone number with numeric digits is required.')
+      return
+    }
+
+    if (acceptedImages.length === 0) {
+      setSyncStatus({
+        type: 'error',
+        message: 'No fundus photographs to upload. Please select or drop at least one quality-passed image first.'
+      })
+      return
+    }
+
+    setIsUploading(true)
+    setSyncStatus({
+      type: 'syncing',
+      message: `Uploading Patient ${currentPatientId} and ${acceptedImages.length} image(s) to Supabase Database…`
+    })
 
     try {
       const token = localStorage.getItem('dr_token')
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers['Authorization'] = `Bearer ${token}`
 
-      // 1. Intake Patient in Supabase (forcing lowercase ID)
+      // 1. Intake Patient Record in Supabase (forcing lowercase ID)
       const intakeRes = await fetch('/api/patients/intake', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           name: patientName.trim(),
-          phone: cleanPhone
+          phone: cleanPhone,
+          patientId: currentPatientId.toLowerCase()
         })
       })
 
       if (!intakeRes.ok) {
-        const intakeErr = await intakeRes.json()
-        throw new Error(intakeErr.error || 'Failed to record patient in Supabase')
+        const intakeErr = await intakeRes.json().catch(() => ({}))
+        throw new Error(intakeErr.error || `Failed to record patient in Supabase (HTTP ${intakeRes.status})`)
       }
 
-      // 2. Upload Screenings
+      // 2. Upload and verify each screening image in Supabase
       let uploadedCount = 0
+      const failedList = []
+      const updatedImages = []
+
       for (const item of acceptedImages) {
-        await fetch('/api/screenings/upload', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            id: item.id,
-            patientId: item.patientId.toLowerCase(),
-            patientName: item.patientName,
-            patientPhone: item.patientPhone,
-            eye: item.eye,
-            fileName: item.name,
-            imageData: item.thumbnail,
-            prediction: 'Uploaded by Operator',
-            confidence: 0.95,
-            qualityVerdict: item.verdict,
-            timestamp: Date.now()
+        try {
+          const upRes = await fetch('/api/screenings/upload', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              id: item.id,
+              patientId: currentPatientId.toLowerCase(),
+              patientName: patientName.trim(),
+              patientPhone: cleanPhone,
+              eye: item.eye,
+              fileName: item.name,
+              imageData: item.thumbnail,
+              qualityVerdict: item.verdict,
+              qualityReason: (item.reasons || []).join('; '),
+              timestamp: Date.now()
+            })
           })
-        })
-        uploadedCount++
+
+          if (!upRes.ok) {
+            const errData = await upRes.json().catch(() => ({}))
+            const errMsg = errData.error || `HTTP ${upRes.status}`
+            failedList.push(`${item.name}: ${errMsg}`)
+            updatedImages.push({
+              ...item,
+              screeningStatus: `Upload failed: ${errMsg}`
+            })
+          } else {
+            const upData = await upRes.json()
+            const analysis = upData.analysis || {}
+            uploadedCount++
+            updatedImages.push({
+              ...item,
+              patientId: currentPatientId.toLowerCase(),
+              patientName: patientName.trim(),
+              patientPhone: cleanPhone,
+              screeningStatus: 'Verified in Supabase Database',
+              prediction: analysis.prediction || 'Screening Complete',
+              drSoftmax: analysis.drSoftmax,
+              severityLevel: analysis.severityLevel || 'LOW',
+              icdrGrade: analysis.icdrGrade,
+              lesionCounts: analysis.lesionCounts,
+              referable: analysis.referable
+            })
+          }
+        } catch (uploadErr) {
+          failedList.push(`${item.name}: ${uploadErr.message || 'Network disconnected'}`)
+          updatedImages.push({
+            ...item,
+            screeningStatus: `Network error: ${uploadErr.message || 'Failed'}`
+          })
+        }
       }
 
-      setSyncStatus({
-        type: 'success',
-        message: `Successfully synchronized Patient ${currentPatientId} and ${uploadedCount} image(s) to Supabase database.`
-      })
+      setAcceptedImages(updatedImages)
 
-      fetchLiveRoleData()
+      if (failedList.length > 0) {
+        setSyncStatus({
+          type: 'error',
+          message: `Supabase upload partial: ${uploadedCount} image(s) verified in database, ${failedList.length} failed [${failedList.join('; ')}].`
+        })
+      } else {
+        setSyncStatus({
+          type: 'success',
+          message: `Successfully uploaded Patient ${currentPatientId} and verified ${uploadedCount} image(s) in Supabase PostgreSQL database.`
+        })
+      }
+
+      // Re-fetch live data from Supabase to validate persistence
+      await fetchLiveRoleData()
     } catch (err) {
-      console.error('Supabase sync error:', err)
+      console.error('Supabase upload error:', err)
       setSyncStatus({
         type: 'error',
-        message: 'Sync failed: ' + (err.message || err)
+        message: 'Upload failed: ' + (err.message || err)
       })
+    } finally {
+      setIsUploading(false)
     }
   }
 
@@ -668,19 +720,24 @@ export default function Screening() {
                 </h3>
                 <button
                   type="button"
-                  onClick={handleSyncToSupabase}
+                  id="operator-upload-supabase-btn"
+                  onClick={handleUploadToSupabase}
+                  disabled={isUploading || acceptedImages.length === 0}
                   style={{
-                    background: '#0f172a',
+                    background: isUploading ? '#64748b' : '#0f172a',
                     color: '#ffffff',
                     border: 'none',
                     borderRadius: 4,
-                    padding: '0.45rem 0.85rem',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    cursor: 'pointer'
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    cursor: isUploading || acceptedImages.length === 0 ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
                   }}
                 >
-                  Synchronize with Supabase Database
+                  {isUploading ? 'Uploading & Verifying in Supabase…' : `Upload to Supabase Database (${acceptedImages.length})`}
                 </button>
               </div>
 
@@ -864,6 +921,115 @@ export default function Screening() {
               </div>
             </div>
           )}
+
+          {/* Live Supabase Database Registry Section for Operator */}
+          <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: '2px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#0f172a', fontWeight: 600 }}>
+                  Live Supabase Database Registry (Validated Patients &amp; Imagery)
+                </h3>
+                <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                  Real-time PostgreSQL records fetched directly from Supabase Cloud.
+                </span>
+              </div>
+              <button
+                type="button"
+                id="operator-refresh-db-btn"
+                onClick={fetchLiveRoleData}
+                disabled={dataLoading}
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 4,
+                  padding: '0.4rem 0.85rem',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  color: '#1e293b'
+                }}
+              >
+                {dataLoading ? 'Fetching from Supabase…' : '↻ Refresh Supabase Data'}
+              </button>
+            </div>
+
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, overflowX: 'auto', background: '#ffffff' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Patient ID</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Name</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Phone</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Images in Supabase</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Severity Stage</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Doctor Status</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>Registered On</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {patientsQueue.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                        {dataLoading ? 'Fetching records from Supabase PostgreSQL database…' : 'No patients registered in Supabase database yet. Upload a patient photograph above to create the first record.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    patientsQueue.map(p => (
+                      <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '10px 14px' }}>
+                          <code style={{ color: '#0f766e', fontWeight: 700 }}>{p.id}</code>
+                        </td>
+                        <td style={{ padding: '10px 14px', fontWeight: 600, color: '#0f172a' }}>{p.name}</td>
+                        <td style={{ padding: '10px 14px', color: '#475569' }}>{p.phone || '—'}</td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: 12,
+                            fontWeight: 700,
+                            fontSize: '0.74rem',
+                            background: (p.total_image_count || 0) > 0 ? '#f0fdf4' : '#fef2f2',
+                            color: (p.total_image_count || 0) > 0 ? '#166534' : '#991b1b',
+                            border: `1px solid ${(p.total_image_count || 0) > 0 ? '#bbf7d0' : '#fecaca'}`
+                          }}>
+                            {p.total_image_count || 0} image(s) verified
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            fontWeight: 700,
+                            fontSize: '0.74rem',
+                            background: p.severity_level === 'HIGH' ? '#fef2f2' : p.severity_level === 'MEDIUM' ? '#fffbeb' : '#f0fdf4',
+                            color: p.severity_level === 'HIGH' ? '#b91c1c' : p.severity_level === 'MEDIUM' ? '#b45309' : '#15803d',
+                            border: `1px solid ${p.severity_level === 'HIGH' ? '#fca5a5' : p.severity_level === 'MEDIUM' ? '#fcd34d' : '#86efac'}`
+                          }}>
+                            {p.severity_level || 'LOW'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            background: p.review_status === 'completed' ? '#f0fdf4' : '#fffbeb',
+                            color: p.review_status === 'completed' ? '#166534' : '#b45309',
+                            border: `1px solid ${p.review_status === 'completed' ? '#86efac' : '#fcd34d'}`
+                          }}>
+                            {p.review_status === 'completed' ? '✓ Completed' : '⏳ Pending Review'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px', color: '#64748b', fontSize: '0.76rem' }}>
+                          {p.created_at ? new Date(p.created_at).toLocaleString() : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </section>
       )}
 
