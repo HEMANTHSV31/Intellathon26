@@ -379,16 +379,17 @@ const { exec } = require('child_process');
 
 // 5. Simulink & MATLAB Integration Endpoints
 
-// Check if MATLAB is detected on the system
+// Check if MATLAB is detected on the system (cross-platform)
 app.get('/api/simulink/status', (req, res) => {
-  exec('where matlab', (err, stdout) => {
+  const checkCmd = process.platform === 'win32' ? 'where matlab' : 'which matlab';
+  exec(checkCmd, (err, stdout) => {
     const hasMatlab = !err && stdout && stdout.trim().length > 0;
     const simulinkDir = path.join(__dirname, '..', 'simulink');
     const filesExist = fs.existsSync(simulinkDir);
 
     res.json({
       matlabInstalled: !!hasMatlab,
-      matlabPath: hasMatlab ? stdout.trim().split('\r\n')[0] : null,
+      matlabPath: hasMatlab ? stdout.trim().split(/\r?\n/)[0] : null,
       simulinkFilesReady: filesExist,
       simulinkDirectory: simulinkDir
     });
@@ -727,6 +728,8 @@ app.get('/api/patients', optionalAuthenticateToken, async (req, res) => {
              COALESCE(p.severity_level, 'LOW') as severity_level,
              COALESCE(p.review_status, 'pending') as review_status,
              p.reviewed_at,
+             p.doctor_notes,
+             p.doctor_grade,
              COUNT(s.id)::int as total_image_count,
              COUNT(CASE WHEN s.quality_verdict != 'reject' THEN 1 END)::int as quality_passed_count,
              COUNT(CASE WHEN s.quality_verdict = 'reject' THEN 1 END)::int as quality_rejected_count,
@@ -737,7 +740,7 @@ app.get('/api/patients', optionalAuthenticateToken, async (req, res) => {
       FROM patients p
       LEFT JOIN uploaded_screenings s ON LOWER(p.id) = LOWER(s.patient_id)
       ${whereSql}
-      GROUP BY p.id, p.name, p.phone, p.created_at, p.updated_at, p.severity_level, p.review_status, p.reviewed_at
+      GROUP BY p.id, p.name, p.phone, p.created_at, p.updated_at, p.severity_level, p.review_status, p.reviewed_at, p.doctor_notes, p.doctor_grade
       ORDER BY
         CASE
           WHEN UPPER(COALESCE(p.severity_level, 'LOW')) = 'HIGH' THEN 1
@@ -757,7 +760,7 @@ app.get('/api/patients', optionalAuthenticateToken, async (req, res) => {
   }
 });
 
-// 7b. Doctor: Mark Patient Review as Complete (removes from active priority queue)
+// 7b. Doctor: Save Clinical Evaluation, Notes & Mark Review Complete (removes from active priority queue)
 app.post('/api/patients/:id/complete', optionalAuthenticateToken, async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -767,16 +770,33 @@ app.post('/api/patients/:id/complete', optionalAuthenticateToken, async (req, re
 
     const patientId = rawId.trim().toLowerCase();
     const doctorUserId = req.user ? req.user.id : null;
+    const { doctorNotes, doctorGrade, severityLevel, markComplete = true } = req.body || {};
+
+    // Calculate severity level from doctorGrade if not passed explicitly
+    let finalSeverity = severityLevel;
+    if (!finalSeverity && doctorGrade) {
+      const g = doctorGrade.toLowerCase();
+      if (g.includes('stage 3') || g.includes('stage 4') || g.includes('severe') || g.includes('proliferative')) {
+        finalSeverity = 'HIGH';
+      } else if (g.includes('stage 2') || g.includes('moderate')) {
+        finalSeverity = 'MEDIUM';
+      } else {
+        finalSeverity = 'LOW';
+      }
+    }
 
     const patientUpdate = await query(
       `UPDATE patients
-       SET review_status = 'completed',
+       SET review_status = CASE WHEN $1 = true THEN 'completed' ELSE review_status END,
            reviewed_by = $2,
-           reviewed_at = NOW(),
+           reviewed_at = CASE WHEN $1 = true THEN NOW() ELSE reviewed_at END,
+           doctor_notes = COALESCE($3, doctor_notes),
+           doctor_grade = COALESCE($4, doctor_grade),
+           severity_level = COALESCE($5, severity_level),
            updated_at = NOW()
-       WHERE LOWER(id) = LOWER($1)
-       RETURNING id, name, review_status, reviewed_at;`,
-      [patientId, doctorUserId]
+       WHERE LOWER(id) = LOWER($6)
+       RETURNING id, name, review_status, reviewed_at, doctor_notes, doctor_grade, severity_level;`,
+      [markComplete, doctorUserId, doctorNotes !== undefined ? doctorNotes : null, doctorGrade || null, finalSeverity || null, patientId]
     );
 
     if (patientUpdate.rows.length === 0) {
@@ -785,21 +805,32 @@ app.post('/api/patients/:id/complete', optionalAuthenticateToken, async (req, re
 
     await query(
       `UPDATE uploaded_screenings
-       SET review_status = 'completed'
-       WHERE LOWER(patient_id) = LOWER($1);`,
-      [patientId]
+       SET review_status = CASE WHEN $1 = true THEN 'completed' ELSE review_status END,
+           doctor_notes = COALESCE($2, doctor_notes),
+           doctor_grade = COALESCE($3, doctor_grade),
+           severity_level = COALESCE($4, severity_level)
+       WHERE LOWER(patient_id) = LOWER($5);`,
+      [markComplete, doctorNotes !== undefined ? doctorNotes : null, doctorGrade || null, finalSeverity || null, patientId]
     );
 
-    console.log(`[Doctor Review] Patient ${patientId} marked as completed.`);
+    console.log(`[Doctor Review] Patient ${patientId} updated: Grade="${doctorGrade || 'N/A'}", markComplete=${markComplete}.`);
     return res.json({
       success: true,
-      message: 'Patient review marked as complete and removed from active priority queue.',
+      message: markComplete
+        ? 'Patient review evaluated, marked as complete and archived from active queue.'
+        : 'Doctor notes and clinical evaluation saved successfully.',
       patient: patientUpdate.rows[0]
     });
   } catch (err) {
     console.error('Mark complete error:', err);
     return res.status(500).json({ error: 'Failed to complete review: ' + (err.message || err) });
   }
+});
+
+// Alias to save notes and evaluation without necessarily completing
+app.post('/api/patients/:id/notes', optionalAuthenticateToken, async (req, res) => {
+  req.body = { ...req.body, markComplete: false };
+  return app._router.handle(req, res);
 });
 
 // 8. Upload fundus image & Run Automated Backend Screening
@@ -970,6 +1001,7 @@ app.get('/api/screenings', optionalAuthenticateToken, async (req, res) => {
              file_name, image_data, prediction, confidence, dr_score, dr_softmax,
              icdr_grade, severity_level, review_status, referable,
              quality_verdict, quality_reason, recommendations, lesion_counts,
+             doctor_notes, doctor_grade,
              created_at, synced_at
       FROM uploaded_screenings
       WHERE 1=1
@@ -1018,6 +1050,8 @@ app.get('/api/admin/records', optionalAuthenticateToken, async (req, res) => {
       SELECT s.id as screening_id, s.patient_id, s.patient_name, s.patient_phone, s.eye,
              s.file_name, s.image_data, s.prediction, s.confidence, s.dr_score, s.dr_softmax,
              s.icdr_grade, s.referable,
+             COALESCE(s.doctor_notes, p.doctor_notes) as doctor_notes,
+             COALESCE(s.doctor_grade, p.doctor_grade) as doctor_grade,
              COALESCE(s.severity_level, p.severity_level, 'LOW') as severity_level,
              COALESCE(p.review_status, s.review_status, 'pending') as review_status,
              s.quality_verdict, s.quality_reason, s.recommendations, s.lesion_counts,
@@ -1038,6 +1072,8 @@ app.get('/api/admin/records', optionalAuthenticateToken, async (req, res) => {
         LOWER(COALESCE(s.patient_phone, p.phone, '')) LIKE $${idx} OR
         LOWER(COALESCE(s.file_name, '')) LIKE $${idx} OR
         LOWER(COALESCE(s.icdr_grade, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.doctor_grade, p.doctor_grade, '')) LIKE $${idx} OR
+        LOWER(COALESCE(s.doctor_notes, p.doctor_notes, '')) LIKE $${idx} OR
         LOWER(COALESCE(s.prediction, '')) LIKE $${idx}
       )`;
     }

@@ -105,6 +105,8 @@ async function initDb(maxRetries = 5) {
         ALTER TABLE patients ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'pending';
         ALTER TABLE patients ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL;
         ALTER TABLE patients ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS doctor_notes TEXT;
+        ALTER TABLE patients ADD COLUMN IF NOT EXISTS doctor_grade VARCHAR(255);
 
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_id VARCHAR(255);
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS patient_name VARCHAR(255);
@@ -114,6 +116,8 @@ async function initDb(maxRetries = 5) {
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS severity_level VARCHAR(50) DEFAULT 'LOW';
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'pending';
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS dr_softmax FLOAT;
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS doctor_notes TEXT;
+        ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS doctor_grade VARCHAR(255);
       `);
 
       console.log('Database tables (app_roles, users, patients, uploaded_screenings) verified/created in Supabase Postgres.');
