@@ -931,17 +931,65 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
         eye = COALESCE(EXCLUDED.eye, uploaded_screenings.eye),
         operator_id = COALESCE(EXCLUDED.operator_id, uploaded_screenings.operator_id),
         image_data = COALESCE(EXCLUDED.image_data, uploaded_screenings.image_data),
-        prediction = COALESCE(EXCLUDED.prediction, uploaded_screenings.prediction),
-        confidence = COALESCE(EXCLUDED.confidence, uploaded_screenings.confidence),
-        dr_score = COALESCE(EXCLUDED.dr_score, uploaded_screenings.dr_score),
-        dr_softmax = COALESCE(EXCLUDED.dr_softmax, uploaded_screenings.dr_softmax),
-        icdr_grade = COALESCE(EXCLUDED.icdr_grade, uploaded_screenings.icdr_grade),
-        severity_level = COALESCE(EXCLUDED.severity_level, uploaded_screenings.severity_level),
-        referable = COALESCE(EXCLUDED.referable, uploaded_screenings.referable),
+        prediction = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.prediction
+          ELSE COALESCE(EXCLUDED.prediction, uploaded_screenings.prediction)
+        END,
+        confidence = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.confidence
+          ELSE COALESCE(EXCLUDED.confidence, uploaded_screenings.confidence)
+        END,
+        dr_score = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.dr_score
+          ELSE COALESCE(EXCLUDED.dr_score, uploaded_screenings.dr_score)
+        END,
+        dr_softmax = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.dr_softmax
+          ELSE COALESCE(EXCLUDED.dr_softmax, uploaded_screenings.dr_softmax)
+        END,
+        icdr_grade = CASE
+          WHEN EXCLUDED.icdr_grade IN ('ICDR Evaluated', 'Evaluated') 
+               AND uploaded_screenings.icdr_grade IS NOT NULL 
+               AND uploaded_screenings.icdr_grade NOT IN ('ICDR Evaluated', 'Evaluated')
+          THEN uploaded_screenings.icdr_grade
+          ELSE COALESCE(EXCLUDED.icdr_grade, uploaded_screenings.icdr_grade)
+        END,
+        severity_level = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.severity_level
+          ELSE COALESCE(EXCLUDED.severity_level, uploaded_screenings.severity_level)
+        END,
+        referable = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.referable
+          ELSE COALESCE(EXCLUDED.referable, uploaded_screenings.referable)
+        END,
         quality_verdict = COALESCE(EXCLUDED.quality_verdict, uploaded_screenings.quality_verdict),
         quality_reason = COALESCE(EXCLUDED.quality_reason, uploaded_screenings.quality_reason),
         recommendations = COALESCE(EXCLUDED.recommendations, uploaded_screenings.recommendations),
-        lesion_counts = COALESCE(EXCLUDED.lesion_counts, uploaded_screenings.lesion_counts)
+        lesion_counts = CASE
+          WHEN EXCLUDED.prediction IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…') 
+               AND uploaded_screenings.prediction IS NOT NULL 
+               AND uploaded_screenings.prediction NOT IN ('Uploaded by Operator', 'Screening Completed', 'Analyzing on server…')
+          THEN uploaded_screenings.lesion_counts
+          ELSE COALESCE(EXCLUDED.lesion_counts, uploaded_screenings.lesion_counts)
+        END
       RETURNING id, patient_id, patient_name, file_name, prediction, confidence, dr_softmax, icdr_grade, severity_level, referable, created_at;
     `;
 
@@ -989,6 +1037,63 @@ app.post('/api/screenings/upload', optionalAuthenticateToken, async (req, res) =
   } catch (err) {
     console.error('Screening upload error:', err);
     return res.status(500).json({ error: 'Failed to process screening in backend: ' + (err.message || err) });
+  }
+});
+
+// 8b. Update screening metadata (patientId, patientName, patientPhone, eye, qualityVerdict) without touching predictions
+app.post('/api/screenings/:id/metadata', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const rawId = req.params.id;
+    if (!rawId) {
+      return res.status(400).json({ error: 'Screening ID is required' });
+    }
+
+    const { patientId, patientName, patientPhone, eye, qualityVerdict } = req.body || {};
+    const cleanPatientId = patientId ? patientId.trim().toLowerCase() : null;
+
+    const result = await query(
+      `UPDATE uploaded_screenings
+       SET patient_id = COALESCE($1, patient_id),
+           patient_name = COALESCE($2, patient_name),
+           patient_phone = COALESCE($3, patient_phone),
+           eye = COALESCE($4, eye),
+           quality_verdict = COALESCE($5, quality_verdict),
+           synced_at = NOW()
+       WHERE id = $6
+       RETURNING id, patient_id, patient_name, patient_phone, eye, quality_verdict, prediction, dr_softmax, icdr_grade, severity_level;`,
+      [cleanPatientId, patientName ? patientName.trim() : null, patientPhone ? patientPhone.trim() : null, eye || null, qualityVerdict || null, rawId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Screening record not found' });
+    }
+
+    // Also ensure patient table reflects the patient record
+    if (patientName && patientPhone && cleanPatientId) {
+      try {
+        const cleanPhone = patientPhone.trim().replace(/\D/g, '');
+        const operatorId = req.user?.role === 'operator' ? req.user.id : null;
+        await query(`
+          INSERT INTO patients (id, name, phone, operator_id, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, NOW(), NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            phone = EXCLUDED.phone,
+            updated_at = NOW();
+        `, [cleanPatientId, patientName.trim(), cleanPhone, operatorId]);
+      } catch (pErr) {
+        console.warn('Patient sync notice in metadata update:', pErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Screening metadata updated successfully without modifying prediction results.',
+      screening: result.rows[0]
+    });
+  } catch (err) {
+    console.error('Screening metadata update error:', err);
+    return res.status(500).json({ error: 'Failed to update screening metadata: ' + (err.message || err) });
   }
 });
 

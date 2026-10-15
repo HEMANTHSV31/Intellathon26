@@ -405,7 +405,8 @@ export default function Screening() {
             severityLevel: 'PENDING',
             lesionCounts: null,
             icdrGrade: null,
-            referable: false
+            referable: false,
+            synced: false
           }
           newAccepted.push(itemObj)
 
@@ -439,7 +440,8 @@ export default function Screening() {
                     severityLevel: analysis.severityLevel || 'LOW',
                     icdrGrade: analysis.icdrGrade,
                     lesionCounts: analysis.lesionCounts,
-                    referable: analysis.referable
+                    referable: analysis.referable,
+                    synced: true
                   }
                 }
                 return img
@@ -528,21 +530,26 @@ export default function Screening() {
     }
   }
 
-  // Sync all accepted images and patient intake directly to Supabase
+  // Sync accepted images and patient intake directly to Supabase
   const handleSyncToSupabase = async () => {
     if (!cleanPhone) {
       alert('Patient phone number is required.')
       return
     }
 
-    setSyncStatus({ type: 'syncing', message: 'Synchronizing patient record and fundus images with Supabase…' })
+    if (acceptedImages.length === 0) {
+      alert('No accepted images to synchronize.')
+      return
+    }
+
+    setSyncStatus({ type: 'syncing', message: 'Synchronizing patient record and image metadata with Supabase…' })
 
     try {
       const token = localStorage.getItem('dr_token')
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers['Authorization'] = `Bearer ${token}`
 
-      // 1. Intake Patient in Supabase (forcing lowercase ID)
+      // 1. Intake / verify Patient in Supabase (forcing lowercase ID)
       const intakeRes = await fetch('/api/patients/intake', {
         method: 'POST',
         headers,
@@ -557,32 +564,81 @@ export default function Screening() {
         throw new Error(intakeErr.error || 'Failed to record patient in Supabase')
       }
 
-      // 2. Upload Screenings
-      let uploadedCount = 0
+      // 2. Synchronize Image Records (Only update unsynced metadata, preserving automated screening predictions)
+      let syncedCount = 0
       for (const item of acceptedImages) {
-        await fetch('/api/screenings/upload', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
+        let metaSuccess = false
+        if (item.synced) {
+          // Image was already uploaded and screened: only sync updated metadata (patient ID, name, phone, eye)
+          try {
+            const metaRes = await fetch(`/api/screenings/${encodeURIComponent(item.id)}/metadata`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                patientId: currentPatientId.toLowerCase(),
+                patientName: patientName.trim(),
+                patientPhone: cleanPhone,
+                eye: item.eye,
+                qualityVerdict: item.verdict
+              })
+            })
+            if (metaRes.ok) {
+              metaSuccess = true
+              syncedCount++
+            }
+          } catch (mErr) {
+            console.warn(`Metadata sync warning for ${item.id}:`, mErr)
+          }
+        }
+
+        if (!metaSuccess) {
+          // Unsynced image (or server fallback): post with real screening attributes preserved, never placeholder strings
+          const payload = {
             id: item.id,
-            patientId: item.patientId.toLowerCase(),
-            patientName: item.patientName,
-            patientPhone: item.patientPhone,
+            patientId: currentPatientId.toLowerCase(),
+            patientName: patientName.trim(),
+            patientPhone: cleanPhone,
             eye: item.eye,
             fileName: item.name,
             imageData: item.thumbnail,
-            prediction: 'Uploaded by Operator',
-            confidence: 0.95,
             qualityVerdict: item.verdict,
             timestamp: Date.now()
+          }
+
+          if (item.prediction && item.prediction !== 'Analyzing on server…' && item.prediction !== 'Uploaded by Operator') {
+            payload.prediction = item.prediction
+            payload.drSoftmax = item.drSoftmax
+            payload.severityLevel = item.severityLevel
+            payload.icdrGrade = item.icdrGrade
+            payload.lesionCounts = item.lesionCounts
+            payload.referable = item.referable
+          }
+
+          const upRes = await fetch('/api/screenings/upload', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload)
           })
-        })
-        uploadedCount++
+
+          if (upRes.ok) {
+            syncedCount++
+          }
+        }
       }
+
+      // Update in-memory state with canonical patient ID and mark synced
+      setAcceptedImages(prev => prev.map(img => ({
+        ...img,
+        patientId: currentPatientId.toLowerCase(),
+        patientName: patientName.trim(),
+        patientPhone: cleanPhone,
+        synced: true,
+        screeningStatus: img.screeningStatus?.includes('Error') ? img.screeningStatus : 'Screening complete (Synced to Supabase)'
+      })))
 
       setSyncStatus({
         type: 'success',
-        message: `Successfully synchronized Patient ${currentPatientId} and ${uploadedCount} image(s) to Supabase database.`
+        message: `Successfully synchronized Patient ${currentPatientId} (${syncedCount} image(s)). Automated predictions preserved.`
       })
 
       fetchLiveRoleData()
