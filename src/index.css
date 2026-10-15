@@ -233,3 +233,51 @@
     .controls{page-break-inside:avoid;position:static;max-height:none;overflow:visible;}
     .model-grid{grid-template-columns:1fr;}
   }
+
+  /* ---------------------------------------------------------------------
+     Netflix-Style Language Selector & Complete Google Banner Suppression
+     --------------------------------------------------------------------- */
+  .netflix-lang-wrapper:hover {
+    border-color: #94a3b8 !important;
+    background: #f8fafc !important;
+  }
+  .netflix-lang-wrapper:focus-within {
+    border-color: #0d7a63 !important;
+    box-shadow: 0 0 0 2px rgba(13, 122, 99, 0.15) !important;
+  }
+
+  /* Completely suppress Google Translate toolbar frame, top banner & popups */
+  .goog-te-banner-frame,
+  iframe.goog-te-banner-frame,
+  .goog-te-banner-frame.skiptranslate,
+  #goog-gt-tt,
+  .goog-te-balloon-frame {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0px !important;
+    width: 0px !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  body {
+    top: 0px !important;
+    position: static !important;
+  }
+  body > .skiptranslate {
+    display: none !important;
+  }
+  #google_translate_element {
+    display: none !important;
+  }
+  .goog-tooltip {
+    display: none !important;
+  }
+  .goog-tooltip:hover {
+    display: none !important;
+  }
+  .goog-text-highlight {
+    background-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+
