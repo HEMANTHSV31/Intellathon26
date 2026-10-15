@@ -1,5 +1,6 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import LanguageSelector from './LanguageSelector'
 
 export default function Navbar() {
   const { isAuthenticated, user, logout } = useAuth()
@@ -111,8 +112,9 @@ export default function Navbar() {
         )}
       </div>
 
-      {/* Auth Actions in Navbar */}
+      {/* Auth Actions & Language Selector in Navbar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+        <LanguageSelector />
         {isAuthenticated ? (
           <>
             <span style={{ fontSize: '0.82rem', color: '#64748b' }}>

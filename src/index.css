@@ -232,3 +232,16 @@
     .controls{page-break-inside:avoid;position:static;max-height:none;overflow:visible;}
     .model-grid{grid-template-columns:1fr;}
   }
+
+  /* ---------------------------------------------------------------------
+     Netflix-Style Language Selector
+     --------------------------------------------------------------------- */
+  .netflix-lang-wrapper:hover {
+    border-color: #94a3b8 !important;
+    background: #f8fafc !important;
+  }
+  .netflix-lang-wrapper:focus-within {
+    border-color: #0d7a63 !important;
+    box-shadow: 0 0 0 2px rgba(13, 122, 99, 0.15) !important;
+  }
+
