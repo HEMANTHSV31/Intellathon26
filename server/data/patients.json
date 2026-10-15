@@ -1,0 +1,52 @@
+[
+  {
+    "id": "rameshkumar_9876543210",
+    "name": "Ramesh Kumar",
+    "phone": "9876543210",
+    "operator_id": "75456038-d30a-4d13-9a1e-e9aa359ae821",
+    "severity_level": "LOW",
+    "review_status": "pending",
+    "created_at": "2026-10-15T02:57:15.113Z",
+    "updated_at": "2026-10-15T03:09:04.339Z"
+  },
+  {
+    "id": "prakash_1234567890",
+    "name": "prakash",
+    "phone": "1234567890",
+    "operator_id": "75456038-d30a-4d13-9a1e-e9aa359ae821",
+    "severity_level": "LOW",
+    "review_status": "pending",
+    "created_at": "2026-10-15T03:04:40.720Z",
+    "updated_at": "2026-10-15T03:04:42.123Z"
+  },
+  {
+    "id": "praksh_9876543210",
+    "name": "praksh",
+    "phone": "9876543210",
+    "operator_id": "75456038-d30a-4d13-9a1e-e9aa359ae821",
+    "severity_level": "LOW",
+    "review_status": "pending",
+    "created_at": "2026-10-15T03:05:14.006Z",
+    "updated_at": "2026-10-15T03:05:15.596Z"
+  },
+  {
+    "id": "rithish_9876543210",
+    "name": "rithish",
+    "phone": "9876543210",
+    "operator_id": "75456038-d30a-4d13-9a1e-e9aa359ae821",
+    "severity_level": "LOW",
+    "review_status": "pending",
+    "created_at": "2026-10-15T03:06:44.524Z",
+    "updated_at": "2026-10-15T03:06:47.616Z"
+  },
+  {
+    "id": "rameshkumarmkmk_9876543210",
+    "name": "Ramesh Kumar mkmk",
+    "phone": "9876543210",
+    "operator_id": "75456038-d30a-4d13-9a1e-e9aa359ae821",
+    "severity_level": "LOW",
+    "review_status": "pending",
+    "created_at": "2026-10-15T03:09:04.295Z",
+    "updated_at": "2026-10-15T03:09:04.295Z"
+  }
+]
