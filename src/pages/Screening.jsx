@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { initScreening, validateImageQuality, runPipelineWithMeta } from '../utils/drEngine'
+import ClinicalReportModal from '../components/ClinicalReportModal'
 
 export default function Screening() {
   const { user, role } = useAuth()
@@ -52,6 +53,14 @@ export default function Screening() {
   const [inspectModal, setInspectModal] = useState({
     isOpen: false,
     record: null
+  })
+
+  // Formal Clinical Diagnostic Report Modal State
+  const [reportModal, setReportModal] = useState({
+    isOpen: false,
+    patient: null,
+    screenings: [],
+    loading: false
   })
 
   const multiFileInputRef = useRef(null)
@@ -203,6 +212,49 @@ export default function Screening() {
     } catch (err) {
       console.warn('Doctor review fetch error:', err)
       setDoctorReviewModal(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  // Formal Clinical Report Handler (Pre-loads images and opens PDF/Print modal)
+  const handleOpenClinicalReport = async (patient, preloadedScreenings = null) => {
+    if (!patient) return
+    const pId = (patient.id || patient.patient_id || '').toLowerCase()
+
+    if (preloadedScreenings && preloadedScreenings.length > 0) {
+      setReportModal({
+        isOpen: true,
+        patient,
+        screenings: preloadedScreenings,
+        loading: false
+      })
+      return
+    }
+
+    setReportModal({
+      isOpen: true,
+      patient,
+      screenings: [],
+      loading: true
+    })
+
+    const token = localStorage.getItem('dr_token')
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    try {
+      const res = await fetch(`/api/screenings?patientId=${encodeURIComponent(pId)}`, { headers })
+      if (res.ok) {
+        const data = await res.json()
+        setReportModal({
+          isOpen: true,
+          patient,
+          screenings: data.screenings || [],
+          loading: false
+        })
+      } else {
+        setReportModal(prev => ({ ...prev, loading: false }))
+      }
+    } catch (err) {
+      console.warn('Clinical report fetch error:', err)
+      setReportModal(prev => ({ ...prev, loading: false }))
     }
   }
 
@@ -1150,9 +1202,30 @@ export default function Screening() {
                           </span>
                         </td>
 
-                        {/* Action Buttons: Review & Mark as Complete */}
+                        {/* Action Buttons: Review, Clinical Report & Mark as Complete */}
                         <td style={{ padding: '8px 10px', textAlign: 'right' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenClinicalReport(p)}
+                              style={{
+                                padding: '3px 8px',
+                                fontSize: '0.74rem',
+                                borderRadius: 4,
+                                background: '#f8fafc',
+                                color: '#0f766e',
+                                border: '1px solid #cbd5e1',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}
+                              title="Print or export formal patient diagnostic report (PDF)"
+                            >
+                              📄 Report
+                            </button>
+
                             <button
                               type="button"
                               onClick={() => handleOpenDoctorReview(p)}
@@ -1269,13 +1342,46 @@ export default function Screening() {
       {/* ========================================================================= */}
       {activeRole === 'patient' && (
         <section id="patient-portal" style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: 6, padding: '1.5rem', marginBottom: '2rem' }}>
-          <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
-            <h2 style={{ margin: 0, fontSize: '1.15rem', color: '#0f172a', fontWeight: 600 }}>
-              Retinal Screening Health Summary
-            </h2>
-            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-              Patient Identifier: <code style={{ color: '#0f766e', fontWeight: 700 }}>{(user?.patientId || currentPatientId).toLowerCase()}</code>
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.15rem', color: '#0f172a', fontWeight: 600 }}>
+                Retinal Screening Health Summary
+              </h2>
+              <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                Patient Identifier: <code style={{ color: '#0f766e', fontWeight: 700 }}>{(user?.patientId || currentPatientId).toLowerCase()}</code>
+              </span>
+            </div>
+
+            {patientScreenings.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleOpenClinicalReport({
+                  id: user?.patientId || currentPatientId,
+                  name: user?.fullName || 'Patient',
+                  phone: user?.phone || '',
+                  severity_level: patientScreenings[0]?.severity_level,
+                  review_status: patientScreenings[0]?.review_status,
+                  doctor_notes: patientScreenings.find(s => s.doctor_notes)?.doctor_notes,
+                  doctor_grade: patientScreenings.find(s => s.doctor_grade)?.doctor_grade,
+                  created_at: patientScreenings[0]?.created_at
+                }, patientScreenings)}
+                style={{
+                  background: '#0f766e',
+                  color: '#ffffff',
+                  border: '1px solid #0d9488',
+                  borderRadius: 4,
+                  padding: '0.45rem 1rem',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                📄 Download Clinical Report (PDF)
+              </button>
+            )}
           </div>
 
           {patientScreenings.length === 0 ? (
@@ -2143,6 +2249,28 @@ export default function Screening() {
                 }}>
                   {doctorReviewModal.patient.review_status === 'completed' ? '✓ Review Completed' : 'Pending Review'}
                 </span>
+
+                {/* Quick Print/Export Report Button in Header */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenClinicalReport(doctorReviewModal.patient, doctorReviewModal.images)}
+                  style={{
+                    background: '#0f766e',
+                    color: '#ffffff',
+                    border: '1px solid #14b8a6',
+                    borderRadius: 4,
+                    padding: '4px 10px',
+                    fontSize: '0.76rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                  title="Generate, print or export formal patient diagnostic summary (PDF)"
+                >
+                  📄 Clinical Report (PDF)
+                </button>
               </div>
             </div>
 
@@ -2468,6 +2596,28 @@ export default function Screening() {
                   Close
                 </button>
 
+                {/* Print / Download Clinical Report (PDF) */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenClinicalReport(doctorReviewModal.patient, doctorReviewModal.images)}
+                  style={{
+                    background: '#f8fafc',
+                    color: '#0f766e',
+                    border: '1.5px solid #0f766e',
+                    borderRadius: 4,
+                    padding: '0.45rem 0.95rem',
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                  title="Generate formal patient diagnostic summary and PDF report"
+                >
+                  📄 Download Clinical Report (PDF)
+                </button>
+
                 {/* Save Draft Button */}
                 <button
                   type="button"
@@ -2601,7 +2751,14 @@ export default function Screening() {
               </tbody>
             </table>
 
-            <div style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end', gap: '0.65rem' }}>
+              <button
+                type="button"
+                onClick={() => handleOpenClinicalReport(inspectModal.record, [inspectModal.record])}
+                style={{ background: '#0f766e', color: '#ffffff', border: 'none', borderRadius: 4, padding: '0.45rem 1rem', fontSize: '0.82rem', cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                📄 Print / Export Clinical Report (PDF)
+              </button>
               <button
                 type="button"
                 onClick={() => setInspectModal({ isOpen: false, record: null })}
@@ -2612,6 +2769,17 @@ export default function Screening() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 10. FORMAL CLINICAL REPORT & PDF EXPORT MODAL */}
+      {reportModal.isOpen && reportModal.patient && (
+        <ClinicalReportModal
+          isOpen={reportModal.isOpen}
+          onClose={() => setReportModal({ isOpen: false, patient: null, screenings: [], loading: false })}
+          patient={reportModal.patient}
+          screenings={reportModal.screenings}
+          doctorUser={user}
+        />
       )}
     </>
   )
