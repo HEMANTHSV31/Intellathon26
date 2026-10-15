@@ -1106,9 +1106,9 @@ export default function Screening() {
                 let color = isSelected ? '#ffffff' : '#475569'
                 let border = isSelected ? '#0f172a' : '#cbd5e1'
                 if (!isSelected) {
-                  if (sev === 'HIGH') { color = '#b91c1c'; border = '#fca5a5'; bg = '#fef2f2' }
-                  else if (sev === 'MEDIUM') { color = '#b45309'; border = '#fcd34d'; bg = '#fffbeb' }
-                  else if (sev === 'LOW') { color = '#15803d'; border = '#86efac'; bg = '#f0fdf4' }
+                  if (sev === 'HIGH') { color = '#991b1b'; border = '#fecaca'; bg = '#fef2f2' }
+                  else if (sev === 'MEDIUM') { color = '#92400e'; border = '#fde68a'; bg = '#fffbeb' }
+                  else if (sev === 'LOW') { color = '#166534'; border = '#bbf7d0'; bg = '#f0fdf4' }
                 }
                 return (
                   <button
@@ -1116,20 +1116,30 @@ export default function Screening() {
                     type="button"
                     onClick={() => setDoctorSeverityFilter(sev)}
                     style={{
-                      padding: '2px 8px',
+                      padding: '3px 9px',
                       fontSize: '0.74rem',
                       fontWeight: 600,
                       background: bg,
                       color: color,
                       border: `1px solid ${border}`,
                       borderRadius: 4,
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
                     }}
                   >
-                    {sev === 'HIGH' && '🔴 '}
-                    {sev === 'MEDIUM' && '🟡 '}
-                    {sev === 'LOW' && '🟢 '}
-                    {sev === 'ALL' ? 'All Tiers' : `${sev}`}
+                    {sev !== 'ALL' && (
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: sev === 'HIGH' ? '#dc2626' : sev === 'MEDIUM' ? '#d97706' : '#16a34a'
+                        }}
+                      />
+                    )}
+                    {sev === 'ALL' ? 'All Tiers' : sev}
                   </button>
                 )
               })}
@@ -1173,16 +1183,17 @@ export default function Screening() {
                           <span style={{
                             display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '4px',
+                            gap: '5px',
                             fontWeight: 700,
                             fontSize: '0.72rem',
                             padding: '2px 8px',
                             borderRadius: 4,
                             background: sev === 'HIGH' ? '#fef2f2' : sev === 'MEDIUM' ? '#fffbeb' : '#f0fdf4',
-                            color: sev === 'HIGH' ? '#b91c1c' : sev === 'MEDIUM' ? '#b45309' : '#15803d',
-                            border: `1px solid ${sev === 'HIGH' ? '#fca5a5' : sev === 'MEDIUM' ? '#fcd34d' : '#86efac'}`
+                            color: sev === 'HIGH' ? '#991b1b' : sev === 'MEDIUM' ? '#92400e' : '#166534',
+                            border: `1px solid ${sev === 'HIGH' ? '#fecaca' : sev === 'MEDIUM' ? '#fde68a' : '#bbf7d0'}`
                           }}>
-                            {sev === 'HIGH' ? '● HIGH' : sev === 'MEDIUM' ? '● MEDIUM' : '● LOW'}
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
+                            {sev}
                           </span>
                         </td>
 
@@ -1279,7 +1290,7 @@ export default function Screening() {
                               }}
                               title="Print or export formal patient diagnostic report (PDF)"
                             >
-                              📄 Report
+                              Report (PDF)
                             </button>
 
                             <button
@@ -1310,9 +1321,9 @@ export default function Screening() {
                                   padding: '3px 10px',
                                   fontSize: '0.76rem',
                                   borderRadius: 4,
-                                  background: '#15803d',
+                                  background: '#166534',
                                   color: '#ffffff',
-                                  border: '1px solid #166534',
+                                  border: '1px solid #14532d',
                                   cursor: completingPatientId === p.id ? 'not-allowed' : 'pointer',
                                   fontWeight: 600
                                 }}
@@ -1629,9 +1640,9 @@ export default function Screening() {
                   style={{ width: '100%', padding: '0.45rem 0.65rem', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: '0.82rem', background: '#ffffff' }}
                 >
                   <option value="ALL">All Severities</option>
-                  <option value="HIGH">🔴 High Severity</option>
-                  <option value="MEDIUM">🟡 Medium Severity</option>
-                  <option value="LOW">🟢 Low Severity</option>
+                  <option value="HIGH">High Severity</option>
+                  <option value="MEDIUM">Medium Severity</option>
+                  <option value="LOW">Low Severity</option>
                 </select>
               </div>
 
@@ -1964,13 +1975,13 @@ export default function Screening() {
           <hr className="rule" />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
             <span className="pill">Step 4</span>
-            <span className="pill" style={{ background: '#0284c7', color: '#ffffff', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span className="pill" style={{ background: '#f0f9ff', color: '#0369a1', border: '1px solid #bae6fd', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               MATLAB Image Processing Suite (+dr)
             </span>
           </div>
           <h2>Lesion candidate mask &amp; candidate localization</h2>
-          <div style={{ background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.08) 0%, rgba(56, 189, 248, 0.04) 100%)', border: '1px solid rgba(2, 132, 199, 0.25)', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '0.84rem', color: '#0369a1' }}>
-            <strong>Morphology &amp; Vessel Suppression:</strong> Multi-scale directional top-hat morphology, vessel anisotropy suppression, and perimacular tolerance (<code style={{ background: 'rgba(2, 132, 199, 0.1)', padding: '2px 4px', borderRadius: '4px' }}>matlab/+dr/detectLesionCandidates.m</code>).
+          <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '0.84rem', color: '#0369a1' }}>
+            <strong>Morphology &amp; Vessel Suppression:</strong> Multi-scale directional top-hat morphology, vessel anisotropy suppression, and perimacular tolerance (<code style={{ background: '#e0f2fe', color: '#0284c7', padding: '2px 5px', borderRadius: '3px' }}>matlab/+dr/detectLesionCandidates.m</code>).
           </div>
 
           <div className="canvas-row">

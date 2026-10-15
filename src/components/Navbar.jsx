@@ -209,7 +209,14 @@ export default function Navbar() {
         {isAuthenticated ? (
           <>
             {/* Professional Role Selector for testing */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#f8fafc', padding: '3px 8px', borderRadius: 5, border: '1px solid #cbd5e1' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#ffffff', padding: '3px 8px', borderRadius: 5, border: '1px solid #e2e8f0' }}>
+              <span style={{
+                display: 'inline-block',
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: activeRole === 'doctor' ? '#0284c7' : activeRole === 'operator' ? '#0f766e' : activeRole === 'admin' ? '#4f46e5' : '#16a34a'
+              }} />
               <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Role:</span>
               <select
                 value={activeRole}
@@ -257,15 +264,16 @@ export default function Navbar() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 height: '28px',
-                background: 'transparent',
+                background: '#ffffff',
                 border: '1px solid #cbd5e1',
-                borderRadius: '4px',
+                borderRadius: '5px',
                 padding: '0 0.75rem',
                 fontSize: '0.78rem',
                 fontWeight: 500,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
-                color: '#334155'
+                color: '#334155',
+                transition: 'all 0.15s ease'
               }}
             >
               Sign Out
@@ -282,12 +290,13 @@ export default function Navbar() {
                 height: '30px',
                 fontSize: '0.82rem',
                 fontWeight: isPatientLoginActive ? 600 : 500,
-                color: '#0f766e',
-                background: isPatientLoginActive ? '#f0fdfa' : 'transparent',
-                border: '1px solid #0f766e',
-                borderRadius: '4px',
+                color: '#0f172a',
+                background: isPatientLoginActive ? '#f1f5f9' : '#ffffff',
+                border: '1px solid #cbd5e1',
+                borderRadius: '5px',
                 padding: '0 0.75rem',
-                textDecoration: 'none'
+                textDecoration: 'none',
+                transition: 'all 0.15s ease'
               }}
             >
               Patient Portal
@@ -304,9 +313,10 @@ export default function Navbar() {
                 color: '#ffffff',
                 background: '#0f172a',
                 border: '1px solid #0f172a',
-                borderRadius: '4px',
+                borderRadius: '5px',
                 padding: '0 0.85rem',
-                textDecoration: 'none'
+                textDecoration: 'none',
+                transition: 'background 0.15s ease'
               }}
             >
               Staff Sign In

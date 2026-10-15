@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 let isConnected = false;
 let realPool = null;
@@ -156,7 +157,48 @@ async function initDb(maxRetries = 3) {
         ALTER TABLE uploaded_screenings ADD COLUMN IF NOT EXISTS doctor_grade VARCHAR(255);
       `);
 
-      console.log('Database tables verified/created in Supabase Postgres.');
+      // Pre-seed default staff demo accounts for 1-click evaluation
+      try {
+        const defaultPasswordHash = await bcrypt.hash('password123', 10);
+        const demoUsers = [
+          {
+            email: 'dr.sharma@hospital.org',
+            fullName: 'Dr. Ananya Sharma',
+            role: 'doctor',
+            phone: '9811223344'
+          },
+          {
+            email: 'operator.vikram@clinic.org',
+            fullName: 'Vikram',
+            role: 'operator',
+            phone: '9876543210'
+          },
+          {
+            email: 'admin.retina@health.gov',
+            fullName: 'Clinical Administrator',
+            role: 'admin',
+            phone: '9000000001'
+          }
+        ];
+
+        for (const u of demoUsers) {
+          await client.query(
+            `INSERT INTO users (email, password_hash, full_name, role, phone, last_login)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (email) DO UPDATE SET
+               password_hash = EXCLUDED.password_hash,
+               role = EXCLUDED.role,
+               full_name = EXCLUDED.full_name,
+               phone = EXCLUDED.phone;`,
+            [u.email.toLowerCase(), defaultPasswordHash, u.fullName, u.role, u.phone]
+          );
+        }
+        console.log('Default staff demo accounts verified/seeded (dr.sharma, operator.vikram, admin.retina).');
+      } catch (seedErr) {
+        console.warn('[Supabase DB seed] Notice while seeding staff demo accounts:', seedErr.message || seedErr);
+      }
+
+      console.log('Database tables (app_roles, users, patients, uploaded_screenings) verified/created in Supabase Postgres.');
       client.release();
       isConnected = true;
       return;
