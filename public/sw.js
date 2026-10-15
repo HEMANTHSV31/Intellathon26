@@ -1,18 +1,22 @@
-const CACHE_NAME = 'dr-screening-rural-v1'
+const CACHE_NAME = 'dr-screening-rural-v2'
 const ASSETS_TO_PRECACHE = [
   '/',
   '/index.html',
   '/tf.min.js',
   '/favicon.svg',
   '/icons.svg',
-  '/models/model.json'
+  '/models/model.json',
+  '/models/group1-shard1of4.bin',
+  '/models/group1-shard2of4.bin',
+  '/models/group1-shard3of4.bin',
+  '/models/group1-shard4of4.bin'
 ]
 
-// Install Service Worker and cache core shell assets
+// Install Service Worker and cache core shell assets and full AI model weights
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[ServiceWorker] Pre-caching core assets for rural offline resilience')
+      console.log('[ServiceWorker] Pre-caching core assets and neural network weight shards for rural offline resilience')
       return cache.addAll(ASSETS_TO_PRECACHE).catch((err) => {
         console.warn('[ServiceWorker] Some precache assets were skipped:', err)
       })
