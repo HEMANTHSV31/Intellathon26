@@ -1,5 +1,6 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import LanguageSelector from './LanguageSelector'
 
 export default function Navbar() {
   const { isAuthenticated, user, role, switchRole, logout } = useAuth()
@@ -202,8 +203,9 @@ export default function Navbar() {
         )}
       </div>
 
-      {/* Auth Actions & Clinical Role Switcher */}
+      {/* Auth Actions, Language Selector & Clinical Role Switcher */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+        <LanguageSelector />
         {isAuthenticated ? (
           <>
             {/* Professional Role Selector for testing */}
